@@ -17,10 +17,13 @@ Install Rust through rustup, then clone this repository and run:
 
 ```sh
 cargo build --locked
+cargo build --locked --manifest-path integrations/hymt-bridge/Cargo.toml
 cargo run --locked -- --help
 cargo test --locked
 cargo fmt --all --check
+cargo fmt --manifest-path integrations/hymt-bridge/Cargo.toml --check
 cargo clippy --locked --all-targets -- -D warnings
+cargo clippy --locked --manifest-path integrations/hymt-bridge/Cargo.toml --all-targets -- -D warnings
 ```
 
 The pinned toolchain is 1.99.1; the minimum supported compiler policy starts at
@@ -29,6 +32,10 @@ Offline tests require no provider credentials. Runtime adapters require FFmpeg,
 ffprobe, yt-dlp and md2audio; PDF extraction uses Poppler. See the
 [specification](docs/spec/root.md), [architecture](docs/spec/02.md), and
 [dependency inventory](docs/dependencies.md).
+
+Translation uses the separately built `archive-hymt-bridge` Rust binary and the
+[pinned hymt libraries](docs/translation.md). Build it before the integrated tests;
+they exercise the actual binary against a local HTTP fixture without credentials.
 
 Never put bot tokens, cookies, personal archives or live configuration in this
 repository. Production activation and real client playback validation are

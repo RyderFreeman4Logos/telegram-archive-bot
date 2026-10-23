@@ -43,3 +43,18 @@ fixtures now use private temporary roots under the repository's ignored target
 directory. Production directory-loss errors remain failures. The final full
 suite passed, and 30 additional complete process suites passed with the isolated
 fixture roots.
+
+F10 PR [#31](https://github.com/RyderFreeman4Logos/telegram-archive-bot/pull/31)
+merged after [39987115986](https://github.com/RyderFreeman4Logos/telegram-archive-bot/actions/runs/39987115986)
+passed. The original push check first timed out during apt package installation;
+its rerun was superseded/cancelled by the successful PR check, before any claim of
+code-check success from that failed attempt.
+
+| F11 | Build pinned Rust bridge; host `cargo test --locked`; bridge `cargo test --locked --manifest-path integrations/hymt-bridge/Cargo.toml`; formatting and all-target Clippy for both workspaces | 58 host checks and 1 bridge check passed. Six integrated tests run the actual bridge against local HTTP: mixed Markdown/code/Unicode and multiple segments, verified cache reuse, changed profile invalidation, unverified bypass, detached configuration after file mutation, empty translated payload despite protected URL, retained-original truncation, failing later segment, silent cancellation/timeout, omitted sampler fields and ADK phase transition. A unit check rejects tampered byte hashes and invalid Unicode ranges; bridge error classification is tested without exposing provider bodies. | No live hymt/model quality or Telegram playback acceptance is claimed. Semantic fidelity is explicitly unverified; private upstream cache is disposable and currently has no disk quota. Full runtime admission and cache maintenance remain F18/F19. |
+
+The F11 fixture initially assumed every hymt request was streaming; the pinned
+implementation uses non-streaming calls for some later segments. The fixture was
+corrected to serve both documented client paths. An empty completion with a
+protected URL revealed a real adapter validation gap; the bridge now rejects a
+result equal to reconstructing all translated segments as empty. Tests preserve
+that case. No semantic-completeness guarantee was added.

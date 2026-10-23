@@ -264,7 +264,7 @@ impl Store {
         Ok(digest)
     }
 
-    fn publish_derivative(
+    pub(crate) fn publish_derivative(
         &self,
         lease: &Lease,
         key: &str,
@@ -291,7 +291,12 @@ impl Store {
         Ok(selected)
     }
 
-    fn model_attempt(&self, lease: &Lease, key: &str, request: &LlmRequest) -> Result<i64> {
+    pub(crate) fn model_attempt(
+        &self,
+        lease: &Lease,
+        key: &str,
+        request: &impl Serialize,
+    ) -> Result<i64> {
         let blob = self.publish_bytes(&serde_json::to_vec(request)?)?;
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;

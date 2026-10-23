@@ -1,4 +1,5 @@
 /target/
+/integrations/hymt-bridge/target/
 /.env
 /*.local.toml
 /state/

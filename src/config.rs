@@ -149,6 +149,7 @@ pub struct Translation {
     pub model: String,
     pub deployment_revision: String,
     pub profile: String,
+    pub backend: String,
     pub key: Option<SecretRef>,
     pub language: String,
     pub context_tokens: u32,
@@ -161,6 +162,7 @@ impl Default for Translation {
             model: "configured-model".into(),
             deployment_revision: "unconfigured".into(),
             profile: "generic".into(),
+            backend: "openai_compatible".into(),
             key: None,
             language: "zh".into(),
             context_tokens: 8192,
@@ -370,6 +372,18 @@ impl Config {
             ensure!(
                 self.translation.deployment_revision != "unconfigured",
                 "translation requires deployment_revision"
+            );
+            ensure!(
+                matches!(
+                    self.translation.backend.as_str(),
+                    "openai_compatible" | "llama_cpp" | "vllm"
+                ) && matches!(
+                    self.translation.profile.as_str(),
+                    "generic" | "hy_mt2_7b" | "hy_mt2_30b_a3b"
+                ) && self.translation.context_tokens >= 2048
+                    && !self.translation.model.trim().is_empty()
+                    && !self.translation.language.trim().is_empty(),
+                "invalid translation backend, profile or budget"
             );
         }
         ensure!(
