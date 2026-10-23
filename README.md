@@ -17,7 +17,7 @@ Install Rust through rustup, then clone this repository and run:
 
 ```sh
 cargo build --locked
-cargo build --locked --manifest-path integrations/hymt-bridge/Cargo.toml
+cargo build --locked --release --manifest-path integrations/hymt-bridge/Cargo.toml
 cargo run --locked -- --help
 cargo test --locked
 cargo fmt --all --check

@@ -14,6 +14,7 @@ pub mod sources;
 pub mod speech;
 pub mod storage;
 pub mod telegram;
+pub mod transforms;
 pub mod translation;
 mod translation_protocol;
 pub mod workflows;

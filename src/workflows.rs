@@ -455,13 +455,69 @@ impl MetadataWorkflow {
         Ok(())
     }
 
+    fn identity(&self, lease: &Lease, revision_ids: &[String]) -> Result<Value> {
+        let outputs = self.store.phase_outputs(&lease.job.id)?;
+        let context = if let Some(id) = outputs
+            .get("fetch")
+            .and_then(|v| v.get("view_id"))
+            .and_then(Value::as_str)
+        {
+            let view = self.store.view(id)?;
+            ensure!(
+                view.members
+                    .iter()
+                    .filter_map(|m| m.revision_id.clone())
+                    .collect::<Vec<_>>()
+                    == revision_ids,
+                Failure::InvalidInput
+            );
+            json!({"view_id":id,"view":view})
+        } else {
+            json!({"standalone_revisions":revision_ids})
+        };
+        Ok(
+            json!({"transform":"metadata-cache-v1","workflow":WORKFLOW_VERSION,"instruction":crate::digest(INSTRUCTION),"context":context,"config":lease.job.config_id,"model":lease.config.model,"effective_model":self.model.name(),"sampling":"provider-defaults-no-overrides","tools":lease.tools}),
+        )
+    }
     pub async fn run(
         &self,
         lease: &Lease,
         revision_ids: &[String],
         cancel: &CancellationToken,
     ) -> Result<String> {
-        self.run_inner(lease, revision_ids, cancel, None).await
+        let identity = self.identity(lease, revision_ids)?;
+        self.store
+            .coalesce(
+                lease,
+                crate::transforms::Transform {
+                    identity,
+                    reuse: crate::transforms::Reuse::Validated,
+                    seconds: lease.config.limits.llm_seconds,
+                },
+                cancel,
+                |blob: &String| {
+                    let manifest: MetadataManifest = serde_json::from_slice(
+                        &self
+                            .store
+                            .read_blob(blob, lease.config.limits.input_bytes)?,
+                    )?;
+                    ensure!(
+                        manifest.revisions == revision_ids
+                            && manifest.schema_version == 1
+                            && !manifest.semantic_fidelity_verified,
+                        Failure::InvalidOutput
+                    );
+                    for id in &manifest.revisions {
+                        self.store.revision(id)?;
+                    }
+                    manifest
+                        .result
+                        .validate(&manifest.blocks.iter().map(|b| b.id.clone()).collect())?;
+                    Ok(true)
+                },
+                |_, token| async move { self.run_inner(lease, revision_ids, &token, None).await },
+            )
+            .await
     }
 
     async fn run_inner(
@@ -485,7 +541,7 @@ impl MetadataWorkflow {
             .collect::<Result<Vec<_>>>()?;
         let chunks = chunks(&revisions, lease)?;
         let input = digest(serde_json::to_vec(
-            &json!({"workflow":WORKFLOW_VERSION,"revisions":revision_ids,"config":lease.job.config_id,"tools":lease.tools}),
+            &json!({"identity":self.identity(lease,revision_ids)?,"forced_run":lease.job.force.then_some(&lease.job.id)}),
         )?);
         let thread = self.store.workflow_mapping(lease, &input)?;
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -649,7 +705,7 @@ mod tests {
             req: LlmRequest,
             _stream: bool,
         ) -> adk_core::Result<LlmResponseStream> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
+            let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
             assert!(req.tools.is_empty());
             if self.mode == "silent" {
                 return std::future::pending().await;
@@ -660,7 +716,11 @@ mod tests {
             let metadata = Metadata {
                 schema_version: 1,
                 title: "Fixture title".into(),
-                summary: "A synthetic observation.".into(),
+                summary: if self.mode == "counted" {
+                    format!("Synthetic result {call}")
+                } else {
+                    "A synthetic observation.".into()
+                },
                 language: "en".into(),
                 tags: vec!["fixture".into()],
                 source_blocks: vec![if self.mode == "unknown" {
@@ -1058,6 +1118,112 @@ mod tests {
         assert!(!format!("{error:?}").contains("synthetic-fixture-key"));
         assert_eq!(count(&store, "model_attempts")?, 1);
         server.await?;
+        Ok(())
+    }
+    fn another_metadata_job(
+        store: &Store,
+        config: &Config,
+        tools: &Value,
+        view: &crate::sources::View,
+        update: i64,
+        force: bool,
+    ) -> Result<Lease> {
+        let update_record: Update = serde_json::from_value(
+            json!({"update_id":update,"message":{"message_id":update,"chat":{"id":10},"from":{"id":20},"text":"independent authorized delivery"}}),
+        )?;
+        store.ingest(config, &update_record, tools)?;
+        if force {
+            store
+                .connection()?
+                .execute("UPDATE jobs SET force_run=1 WHERE update_id=?1", [update])?;
+        }
+        let fetching = store.claim_phase(Phase::Fetch)?.unwrap();
+        store.finish_phase(
+            &fetching,
+            &json!({"view_id":view.id()?,"partial":false}),
+            Some(Phase::Metadata),
+            false,
+        )?;
+        Ok(store.claim_phase(Phase::Metadata)?.unwrap())
+    }
+    #[tokio::test]
+    async fn concurrent_metadata_reuses_one_provider_and_full_context_changes_invalidate()
+    -> Result<()> {
+        let dir = temp()?;
+        let store = Store::open(dir.path())?;
+        let revisions = setup(&store, "One short synthetic paragraph.")?;
+        let first = store.claim_phase(Phase::Metadata)?.unwrap();
+        let fetch = store.phase_outputs(&first.job.id)?;
+        let view = store.view(fetch["fetch"]["view_id"].as_str().unwrap())?;
+        let second = another_metadata_job(&store, &first.config, &first.tools, &view, 2, false)?;
+        let (workflow, calls) = workflow(store.clone(), "counted");
+        let cancel = CancellationToken::new();
+        let (a, b) = tokio::join!(
+            workflow.run(&first, &revisions, &cancel),
+            workflow.run(&second, &revisions, &cancel)
+        );
+        let first_output = a?;
+        assert_eq!(first_output, b?);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let mut changed_view = view.clone();
+        changed_view.policy.max_depth = 0;
+        {
+            let mut conn = store.connection()?;
+            let tx = conn.transaction()?;
+            crate::sources::save_view(&tx, &changed_view)?;
+            tx.commit()?;
+        }
+        let third =
+            another_metadata_job(&store, &first.config, &first.tools, &changed_view, 3, false)?;
+        assert_ne!(
+            first_output,
+            workflow.run(&third, &revisions, &cancel).await?
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        for (i, field) in ["deployment", "prompt", "language", "model"]
+            .iter()
+            .enumerate()
+        {
+            let mut config = first.config.clone();
+            match *field {
+                "deployment" => config.model.deployment_revision = "new-weights".into(),
+                "prompt" => config.model.prompt_version = "metadata-v2".into(),
+                "language" => config.model.language = "en".into(),
+                _ => config.model.name = "other-model".into(),
+            }
+            let lease =
+                another_metadata_job(&store, &config, &first.tools, &view, 10 + i as i64, false)?;
+            workflow.run(&lease, &revisions, &cancel).await?;
+            assert_eq!(calls.load(Ordering::SeqCst), 3 + i);
+        }
+        Ok(())
+    }
+    #[tokio::test]
+    async fn metadata_force_selects_new_immutable_result_and_corrupt_cache_cannot_hit() -> Result<()>
+    {
+        let dir = temp()?;
+        let store = Store::open(dir.path())?;
+        let revisions = setup(&store, "Synthetic force input.")?;
+        let first = store.claim_phase(Phase::Metadata)?.unwrap();
+        let fetch = store.phase_outputs(&first.job.id)?;
+        let view = store.view(fetch["fetch"]["view_id"].as_str().unwrap())?;
+        let (workflow, calls) = workflow(store.clone(), "counted");
+        let cancel = CancellationToken::new();
+        let old = workflow.run(&first, &revisions, &cancel).await?;
+        let forced = another_metadata_job(&store, &first.config, &first.tools, &view, 2, true)?;
+        let new = workflow.run(&forced, &revisions, &cancel).await?;
+        assert_ne!(old, new);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        store.verify_blob(&old)?;
+        assert_eq!(new, workflow.run(&forced, &revisions, &cancel).await?);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let later = another_metadata_job(&store, &first.config, &first.tools, &view, 3, false)?;
+        assert_eq!(new, workflow.run(&later, &revisions, &cancel).await?);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        std::fs::write(store.blob_path(&new)?, b"corrupt cache bytes")?;
+        let another = another_metadata_job(&store, &first.config, &first.tools, &view, 4, false)?;
+        assert!(workflow.run(&another, &revisions, &cancel).await.is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
         Ok(())
     }
 }

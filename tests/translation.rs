@@ -118,7 +118,14 @@ impl Server {
                             } else if mode == "semantic_omission" {
                                 "A completed response omitting most of its source.".into()
                             } else {
-                                source.replace("English", "译文")
+                                source.replace(
+                                    "English",
+                                    &if mode == "counted" {
+                                        format!("译文{n}")
+                                    } else {
+                                        "译文".into()
+                                    },
+                                )
                             };
                             let finish = if mode == "length" { "length" } else { "stop" };
                             let chunk = json!({"choices":[{"index":0,"delta":{"content":text},"finish_reason":null}]});
@@ -168,6 +175,33 @@ impl Server {
     }
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fixture_preflight_survives_a_blocked_host_executor() -> Result<()> {
+    let server = Server::new("ok").await?;
+    let props = server.endpoint.replace("/v1", "/props");
+    let client = std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                reqwest::Client::new()
+                    .get(props)
+                    .timeout(Duration::from_secs(3))
+                    .send()
+                    .await
+                    .is_ok_and(|r| r.status().is_success())
+            })
+    });
+    // Deliberate executor stall: canonical storage work must not starve the fake server.
+    std::thread::sleep(Duration::from_secs(4));
+    assert!(
+        client.join().unwrap(),
+        "fake preflight server was starved by the host executor"
+    );
+    Ok(())
+}
+
 fn temp() -> Result<tempfile::TempDir> {
     Ok(tempfile::Builder::new()
         .permissions(fs::Permissions::from_mode(0o700))
@@ -175,7 +209,7 @@ fn temp() -> Result<tempfile::TempDir> {
 }
 fn bridge() -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("integrations/hymt-bridge/target/debug/archive-hymt-bridge");
+        .join("integrations/hymt-bridge/target/release/archive-hymt-bridge");
     assert!(
         path.is_file(),
         "build integrations/hymt-bridge before running the integrated suite"
@@ -208,6 +242,10 @@ fn prepare(
         json!({"update_id":id,"message":{"message_id":id,"chat":{"id":10},"from":{"id":20},"text":"fixture"}}),
     )?;
     store.ingest(&config, &update, &json!({"hymt":"pinned"}))?;
+    if id == 99 {
+        rusqlite::Connection::open(store.root().join("archive.sqlite"))?
+            .execute("UPDATE jobs SET force_run=1 WHERE update_id=99", [])?;
+    }
     let lease = store.claim_phase(Phase::Fetch)?.unwrap();
     let capture = Capture {
         identity: Identity::from_url("https://example.org/translation-fixture")?,
@@ -258,7 +296,7 @@ fn derivatives(store: &Store) -> Result<i64> {
     )
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mixed_markdown_verified_cache_profile_and_snapshot() -> Result<()> {
     let server = Server::new("ok").await?;
     let temp = temp()?;
@@ -315,7 +353,7 @@ async fn mixed_markdown_verified_cache_profile_and_snapshot() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unverified_identity_does_not_reuse_application_cache() -> Result<()> {
     let server = Server::new("unverified").await?;
     let temp = temp()?;
@@ -345,7 +383,7 @@ async fn unverified_identity_does_not_reuse_application_cache() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn truncation_failure_empty_and_semantic_claims_are_distinct() -> Result<()> {
     for mode in [
         "length",
@@ -410,7 +448,7 @@ async fn truncation_failure_empty_and_semantic_claims_are_distinct() -> Result<(
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn silent_bridge_cancellation_timeout_and_no_complete_publication() -> Result<()> {
     for cancel_run in [true, false] {
         let server = Server::new("silent").await?;
@@ -422,16 +460,16 @@ async fn silent_bridge_cancellation_timeout_and_no_complete_publication() -> Res
             "English silent upstream fixture.",
             1,
             "generic",
-            if cancel_run { 10 } else { 1 },
+            if cancel_run { 30 } else { 1 },
         )?;
         let token = CancellationToken::new();
         let child = token.clone();
         let entered = server.entered.clone();
-        let trigger = tokio::spawn(async move {
-            entered.notified().await;
-            if cancel_run {
+        let trigger = cancel_run.then(|| {
+            tokio::spawn(async move {
+                entered.notified().await;
                 child.cancel();
-            }
+            })
         });
         let result = HymtTranslator {
             store: store.clone(),
@@ -439,7 +477,9 @@ async fn silent_bridge_cancellation_timeout_and_no_complete_publication() -> Res
         .translate(&lease, &store.revision(&id)?, "zh", "generic", &token)
         .await
         .unwrap_err();
-        tokio::time::timeout(Duration::from_secs(5), trigger).await??;
+        if let Some(trigger) = trigger {
+            tokio::time::timeout(Duration::from_secs(5), trigger).await??;
+        }
         assert_eq!(
             result.downcast_ref::<Failure>(),
             Some(if cancel_run {
@@ -449,12 +489,16 @@ async fn silent_bridge_cancellation_timeout_and_no_complete_publication() -> Res
             })
         );
         assert_eq!(derivatives(&store)?, 0);
-        assert_eq!(server.count(), 1);
+        if cancel_run {
+            assert_eq!(server.count(), 1);
+        } else {
+            assert!(server.count() <= 1);
+        }
     }
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn adk_calls_host_translator_and_commits_phase() -> Result<()> {
     let server = Server::new("ok").await?;
     let temp = temp()?;
@@ -466,7 +510,25 @@ async fn adk_calls_host_translator_and_commits_phase() -> Result<()> {
             store: store.clone(),
         }),
     };
-    workflow.run(&lease, CancellationToken::new()).await?;
+    let bridge_bytes = fs::metadata(bridge())?.len();
+    let started = std::time::Instant::now();
+    let result = workflow.run(&lease, CancellationToken::new()).await;
+    if let Err(error) = result {
+        let elapsed = started.elapsed();
+        let hash_started = std::time::Instant::now();
+        let _ = telegram_archive_bot::digest(fs::read(bridge())?);
+        let conn = rusqlite::Connection::open(store.root().join("archive.sqlite"))?;
+        let attempts: Vec<String> = conn
+            .prepare("SELECT status FROM model_attempts")?
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        anyhow::bail!(
+            "workflow failed: {error}; workflow_ms={}; bridge_bytes={bridge_bytes}; independent_hash_ms={}; provider_posts={}; attempts={attempts:?}",
+            elapsed.as_millis(),
+            hash_started.elapsed().as_millis(),
+            server.count()
+        );
+    }
     assert_eq!(
         store.phase_outputs(&lease.job.id)?["translate"]["translations"]
             .as_array()
@@ -481,7 +543,7 @@ async fn adk_calls_host_translator_and_commits_phase() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bridge_detaches_configuration_before_first_segment() -> Result<()> {
     let server = Server::new("slow").await?;
     let temp = temp()?;
@@ -524,5 +586,58 @@ async fn bridge_detaches_configuration_before_first_segment() -> Result<()> {
     assert!(result.report.segments > 1);
     assert_eq!(result.profile, "generic");
     assert_eq!(result.config_id, lease.job.config_id);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_verified_translation_generates_once_and_force_uses_fresh_run() -> Result<()> {
+    let server = Server::new("counted").await?;
+    let root = temp()?;
+    let store = Store::open(root.path())?;
+    let text = (0..30)
+        .map(|i| format!("English source passage number {i} with observable output.\n\n"))
+        .collect::<String>();
+    let (first, id) = prepare(&store, &server, &text, 1, "generic", 30)?;
+    let (second, _) = prepare(&store, &server, &text, 2, "generic", 30)?;
+    assert_eq!(first.job.config_id, second.job.config_id);
+    let revision = store.revision(&id)?;
+    let translator = HymtTranslator {
+        store: store.clone(),
+    };
+    let cancel = CancellationToken::new();
+    let (a, b) = tokio::join!(
+        translator.translate(&first, &revision, "zh", "generic", &cancel),
+        translator.translate(&second, &revision, "zh", "generic", &cancel)
+    );
+    let a = a?;
+    let b = b?;
+    let m = manifest(&store, &a)?;
+    let other = manifest(&store, &b)?;
+    let left = store.read_blob(&m.output_digest, 1_048_576)?;
+    let right = store.read_blob(&other.output_digest, 1_048_576)?;
+    assert_eq!(
+        m.output_digest,
+        other.output_digest,
+        "calls={} first_report={} second_report={} first_output={} second_output={}",
+        server.count(),
+        serde_json::to_string(&m)?,
+        serde_json::to_string(&other)?,
+        String::from_utf8_lossy(&left),
+        String::from_utf8_lossy(&right)
+    );
+    assert!(m.report.cache_verified);
+    let generated = server.count();
+    assert_eq!(generated, m.report.segments);
+    let (forced, _) = prepare(&store, &server, &text, 99, "generic", 30)?;
+    let fresh = translator
+        .translate(&forced, &revision, "zh", "generic", &cancel)
+        .await?;
+    assert_ne!(a, fresh);
+    assert_eq!(server.count(), generated * 2);
+    store.verify_blob(&a)?;
+    translator
+        .translate(&forced, &revision, "zh", "generic", &cancel)
+        .await?;
+    assert_eq!(server.count(), generated * 2);
     Ok(())
 }

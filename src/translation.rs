@@ -181,6 +181,43 @@ impl Translator for HymtTranslator {
         cancel: &CancellationToken,
     ) -> Result<String> {
         self.store.heartbeat(lease)?;
+        let identity = serde_json::json!({"transform":"hymt-coordination-v1","hymt":HYMT_REVISION,"revision":revision.id,"config":lease.job.config_id,"language":language,"profile":profile,"translation":lease.config.translation,"bridge":crate::transforms::executable(&lease.config.tools.hymt_bridge)?,"tools":lease.tools});
+        self.store
+            .coalesce(
+                lease,
+                crate::transforms::Transform {
+                    identity,
+                    reuse: crate::transforms::Reuse::Upstream,
+                    seconds: lease.config.limits.llm_seconds,
+                },
+                cancel,
+                |digest: &String| {
+                    let manifest: TranslationManifest = serde_json::from_slice(
+                        &self
+                            .store
+                            .read_blob(digest, lease.config.limits.input_bytes)?,
+                    )?;
+                    self.store.verify_blob(&manifest.output_digest)?;
+                    Ok(manifest.report.cache_verified && !manifest.partial)
+                },
+                |_, token| async move {
+                    self.translate_direct(lease, revision, language, profile, &token)
+                        .await
+                },
+            )
+            .await
+    }
+}
+impl HymtTranslator {
+    async fn translate_direct(
+        &self,
+        lease: &Lease,
+        revision: &Revision,
+        language: &str,
+        profile: &str,
+        cancel: &CancellationToken,
+    ) -> Result<String> {
+        self.store.heartbeat(lease)?;
         let config = &lease.config;
         let t = &config.translation;
         let budget = config.limits.llm_seconds;
@@ -221,7 +258,11 @@ impl Translator for HymtTranslator {
         private_dir(&cache)?;
         let cache = cache.join("hymt");
         private_dir(&cache)?;
-        let cache = cache.join(format!("{}.sqlite", lease.job.config_id));
+        let cache = cache.join(if lease.job.force {
+            format!("{}-force-{}.sqlite", lease.job.config_id, lease.job.id)
+        } else {
+            format!("{}.sqlite", lease.job.config_id)
+        });
         // Never follow an operator-created cache symlink into another database.
         let cache_file = OpenOptions::new()
             .create(true)
@@ -274,7 +315,7 @@ impl Translator for HymtTranslator {
                 partial:!report.degraded_segments.is_empty() || !report.retained.is_empty(),semantic_fidelity_verified:false,report };
             // Upstream alone admits verified cache reads. Unverified generations get an attempt-local identity.
             let key = digest(serde_json::to_vec(&json!({"version":"translation-v1","hymt":HYMT_REVISION,"revision":revision.id,"config":lease.job.config_id,
-                "bridge":manifest.bridge_digest,"inference":manifest.report.inference_fingerprint,"output":manifest.output_digest,
+                "bridge":manifest.bridge_digest,"inference":manifest.report.inference_fingerprint,"output":manifest.output_digest,"forced_run":lease.job.force.then_some(&lease.job.id),
                 "unverified_attempt":if manifest.report.cache_verified { None } else {Some(&request_key)} }))?);
             let digest = self.store.publish_derivative(lease, &key, "translation", &revision.id, &manifest)?;
             Ok::<_, anyhow::Error>((digest, manifest.output_digest))
