@@ -28,6 +28,11 @@ enum Command {
     Init,
     /// Verify SQLite constraints and every retained object digest.
     Verify,
+    /// Project semantic records into the independently configured archive Git repository.
+    Project {
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
     /// Collect abandoned staging files and uncommitted objects after the grace period.
     Gc,
 }
@@ -61,6 +66,15 @@ fn main() -> anyhow::Result<()> {
                     telegram_archive_bot::storage::SCHEMA_VERSION
                 ),
                 Command::Verify => println!("verified {} retained blobs", store.integrity()?),
+                Command::Project { limit } => {
+                    let runtime = tokio::runtime::Runtime::new()?;
+                    let status = runtime.block_on(store.project(
+                        &config,
+                        limit,
+                        &tokio_util::sync::CancellationToken::new(),
+                    ))?;
+                    println!("{}", serde_json::to_string_pretty(&status)?);
+                }
                 Command::Gc => println!(
                     "collected {} abandoned files",
                     store.gc(std::time::Duration::from_secs(

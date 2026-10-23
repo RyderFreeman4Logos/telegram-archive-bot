@@ -233,6 +233,11 @@ impl Store {
         }
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let event_start: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(id),0) FROM projection_events",
+            [],
+            |r| r.get(0),
+        )?;
         let source = ensure_source(&tx, &capture.identity)?;
         if let Some(alias) = &capture.submitted_url {
             ensure!(
@@ -279,6 +284,10 @@ impl Store {
         tx.execute(
             "INSERT INTO projection_events(kind,entity_id) VALUES('observation',?1)",
             [observation.to_string()],
+        )?;
+        tx.execute(
+            "UPDATE projection_events SET group_key=?1 WHERE id>?2",
+            params![format!("capture:{observation}"), event_start],
         )?;
         tx.commit()?;
         Ok(resulting.or(previous))
