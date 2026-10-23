@@ -32,6 +32,7 @@ fn tool(directory: &Path, mode: &str) -> Tool {
         directory: directory.to_owned(),
         timeout: Duration::from_secs(3),
         log_bytes: 4096,
+        stdout_bytes: None,
         work_bytes: 1_000_000,
         secrets: vec![],
     }

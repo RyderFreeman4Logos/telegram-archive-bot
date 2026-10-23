@@ -29,7 +29,7 @@ cargo clippy --locked --manifest-path integrations/hymt-bridge/Cargo.toml --all-
 The pinned toolchain is 1.99.1; the minimum supported compiler policy starts at
 1.99 and is raised explicitly with dependency changes. CI uses the pinned version.
 Offline tests require no provider credentials. Runtime adapters require FFmpeg,
-ffprobe, yt-dlp and md2audio; PDF extraction uses Poppler. See the
+ffprobe, yt-dlp, md2audio and Bubblewrap (Linux namespaces); PDF extraction uses Poppler. See the
 [specification](docs/spec/root.md), [architecture](docs/spec/02.md), and
 [dependency inventory](docs/dependencies.md).
 

@@ -87,3 +87,11 @@ again failed before code checks: the Azure Ubuntu mirror did not finish package
 downloads within 180 seconds. CI now selects the official HTTPS Ubuntu archive
 for that mirror and omits optional recommended packages. Timeouts and required
 code checks remain in place; no result from this failed run counts as validation.
+
+| F12 | `cargo test --locked`; all-target host Clippy; formatting; real Bubblewrap loopback/capability probe | All 66 host tests passed, including five integrated media checks and two proxy checks. Fixtures use the real application relay and Bubblewrap 0.8.0 with a synthetic yt-dlp: simulation, post-processing filename/extension, failed post-processing, path confinement, missing/failing wrappers without fallback, bounded explicit playlists, private-host rejection with an outside positive control, cancellation after descendant-start observation, and timeout. Proxy checks cover pinned public DNS, mixed private answers, HTTP authority/proxy-header cleanup, private redirect follow-up and forwarding limits. The deployed flag probe showed isolated loopback working and CapEff=0. | Synthetic bytes remain pending-finalization candidates; no playable audio, live yt-dlp site or independently identified inner namespace descendant-reap receipt is claimed. F07 separately tests owned process-group descendant death/reap. Full producer/finalizer/runtime integration remains F14/F19/F20. |
+
+F12 adds a separate bounded metadata stdout allowance while retaining the existing
+stderr log limit. Host proxy tasks are cancelled and joined before a result is
+selected. The snapshot compatibility regression also removes the newly defaulted
+Bubblewrap field, confirming that an older snapshot still resumes without
+changing its stored hash.
