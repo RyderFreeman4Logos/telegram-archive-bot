@@ -1,4 +1,5 @@
 pub mod config;
+pub mod jobs;
 pub mod sources;
 pub mod storage;
 pub mod telegram;
