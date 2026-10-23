@@ -10,7 +10,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 #[derive(Clone, Debug)]
 pub struct Store {
@@ -97,6 +97,9 @@ impl Store {
         }
         if version < 3 {
             tx.execute_batch(include_str!("../migrations/003_ingress.sql"))?;
+        }
+        if version < 4 {
+            tx.execute_batch(include_str!("../migrations/004_job_recovery.sql"))?;
         }
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         tx.commit()?;
