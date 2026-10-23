@@ -46,6 +46,147 @@ fn retry_metric_counts_repeated_phase_attempts_and_excludes_phase_progress() -> 
     assert_eq!(crate::operator::metrics(&store)?["job_retries"], 1);
     Ok(())
 }
+
+#[tokio::test]
+async fn product_web_text_attachment_and_empty_text_pdf_keep_usable_originals() -> Result<()> {
+    let (root, store, mut config) = fixture()?;
+    let producer = root.path().join("tts");
+    fs::write(
+        &producer,
+        "#!/usr/bin/python3\nimport sys, shutil\nfrom pathlib import Path\na=sys.argv[1:]\nassert Path(a[1]).read_text().strip()\nshutil.copyfile(Path(__file__).with_suffix('.mp3'),a[a.index('--output')+1])\n",
+    )?;
+    fs::set_permissions(&producer, fs::Permissions::from_mode(0o700))?;
+    assert!(
+        std::process::Command::new("/usr/bin/ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-nostdin",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=3",
+                "-c:a",
+                "libmp3lame",
+                "-b:a",
+                "96k",
+            ])
+            .arg(producer.with_extension("mp3"))
+            .status()?
+            .success()
+    );
+    config.synthesis.enabled = true;
+    config.tools.md2audio = producer;
+    let docs = Documents {
+        store: store.clone(),
+        config: config.clone(),
+        http: PublicHttp::default(),
+    };
+    let cancel = CancellationToken::new();
+    let html = format!(
+        "<html><head><title>Synthetic article</title></head><body><article><h1>Evidence</h1><p>{}</p></article></body></html>",
+        "Original content with separate raw bytes and derived Markdown. ".repeat(15)
+    );
+    let extraction = docs
+        .response(
+            crate::network::Response {
+                submitted: "https://example.org/article?id=1".parse()?,
+                resolved: "https://example.org/article?id=1".parse()?,
+                redirects: vec![],
+                status: 200,
+                content_type: "text/html".into(),
+                charset: None,
+                bytes: html.into_bytes(),
+            },
+            &cancel,
+        )
+        .await?;
+    let web = lease(&store, &config, 1, "https://example.org/article?id=1")?;
+    store.accept_extraction(&web, &extraction)?;
+    let attachment = docs
+        .attachment(
+            "text-fixture",
+            "same.md",
+            b"# Synthetic text\n\nKeep **Markdown** unchanged.",
+            &cancel,
+        )
+        .await?;
+    let text = lease(&store, &config, 2, "Synthetic document submission")?;
+    store.accept_extraction(&text, &attachment)?;
+    let pdf = docs
+        .attachment(
+            "empty-text-pdf",
+            "same.pdf",
+            include_bytes!("../tests/fixtures/blank.pdf"),
+            &cancel,
+        )
+        .await?;
+    assert!(pdf.original.validated && pdf.text_digest.is_none());
+    let pdf_job = lease(&store, &config, 3, "Synthetic PDF submission")?;
+    store.accept_extraction(&pdf_job, &pdf)?;
+    assert_eq!(
+        store.job_for(scope(), &pdf_job.job.id)?.phase,
+        Phase::Finalize
+    );
+    for phase in [
+        Phase::Metadata,
+        Phase::Translate,
+        Phase::Download,
+        Phase::Synthesize,
+        Phase::Finalize,
+        Phase::Archive,
+    ] {
+        while step(&store, phase, &std::env::current_exe()?, &cancel).await? {}
+    }
+    assert_eq!(
+        store.job_for(scope(), &web.job.id)?.state,
+        JobState::Complete
+    );
+    assert_eq!(
+        store.job_for(scope(), &text.job.id)?.state,
+        JobState::Complete
+    );
+    assert_eq!(
+        store.job_for(scope(), &pdf_job.job.id)?.state,
+        JobState::Partial
+    );
+    let payloads: Vec<String> = store
+        .connection()?
+        .prepare("SELECT payload FROM outbox WHERE job_id=?1")?
+        .query_map([&pdf_job.job.id], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    assert!(
+        payloads
+            .iter()
+            .any(|p| p.contains(&pdf.original.digest) && p.contains("application/pdf"))
+    );
+    assert!(
+        !store
+            .phase_outputs(&pdf_job.job.id)?
+            .contains_key("translate")
+    );
+    assert_eq!(
+        store.read_blob(&pdf.original.digest, 10000)?,
+        include_bytes!("../tests/fixtures/blank.pdf")
+    );
+    assert!(
+        !store
+            .phase_outputs(&pdf_job.job.id)?
+            .contains_key("synthesize")
+    );
+    for job in [&web.job.id, &text.job.id] {
+        let outputs = store.phase_outputs(job)?;
+        assert!(outputs.contains_key("synthesize"));
+        let ready: i64 = store.connection()?.query_row(
+            "SELECT count(*) FROM outbox WHERE job_id=?1 AND kind='audio'",
+            [job],
+            |r| r.get(0),
+        )?;
+        assert_eq!(ready, 1);
+    }
+    store.integrity()?;
+    Ok(())
+}
 #[tokio::test]
 async fn lost_fetch_owner_cannot_capture_select_view_or_finish() -> Result<()> {
     let (_root, store, config) = fixture()?;
