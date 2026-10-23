@@ -381,14 +381,23 @@ pub struct Traversal {
 
 impl Traversal {
     pub fn persist(&self, store: &Store) -> anyhow::Result<crate::sources::View> {
-        use crate::sources::{View, ViewEdge, ViewMember, ViewPolicy, ensure_source, save_view};
-        use rusqlite::{TransactionBehavior, params};
-        for capture in &self.captures {
-            store.capture(capture)?;
-        }
         let mut conn = store.connection()?;
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let root_id = ensure_source(&tx, &self.root)?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let view = self.persist_in_tx(store, &tx)?;
+        tx.commit()?;
+        Ok(view)
+    }
+    pub(crate) fn persist_in_tx(
+        &self,
+        store: &Store,
+        tx: &rusqlite::Transaction<'_>,
+    ) -> anyhow::Result<crate::sources::View> {
+        use crate::sources::{View, ViewEdge, ViewMember, ViewPolicy, ensure_source, save_view};
+        use rusqlite::params;
+        for capture in &self.captures {
+            store.capture_in_tx(tx, capture)?;
+        }
+        let root_id = ensure_source(tx, &self.root)?;
         let mut ids = self.visited.clone();
         if !ids.contains(&root_id) {
             ids.insert(0, root_id.clone());
@@ -426,8 +435,7 @@ impl Traversal {
             let edges=tx.prepare("SELECT r.target_id,r.kind,MAX(r.observation_id) FROM relations r JOIN observations o ON o.id=r.observation_id WHERE r.source_id=?1 AND (o.revision_id=?2 OR (?2 IS NULL AND o.revision_id IS NULL)) GROUP BY r.target_id,r.kind ORDER BY r.kind,r.target_id")?.query_map(params![source,revision],|r|Ok(ViewEdge{source_id:source.clone(),target_id:r.get(0)?,kind:r.get(1)?,observation_id:r.get(2)?}))?.collect::<rusqlite::Result<Vec<_>>>()?;
             view.edges.extend(edges);
         }
-        save_view(&tx, &view)?;
-        tx.commit()?;
+        save_view(tx, &view)?;
         Ok(view)
     }
 }

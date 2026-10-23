@@ -203,6 +203,13 @@ async fn run(args: &[String]) -> Result<BridgeReport> {
 
 #[tokio::main]
 async fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        println!(
+            "archive-hymt-bridge {} hymt={HYMT_REVISION}",
+            env!("CARGO_PKG_VERSION")
+        );
+        return;
+    }
     let args: Vec<_> = std::env::args().skip(1).collect();
     match run(&args).await {
         Ok(report) => println!("{}", serde_json::to_string(&report).unwrap()),

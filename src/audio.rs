@@ -690,6 +690,13 @@ impl AudioFinalizer {
             tx.execute("INSERT INTO projection_events(kind,entity_id) VALUES('artifact',?1) ON CONFLICT DO NOTHING",[&artifact.artifact_id])?;
         }
         tx.commit()?;
+        for artifact in &output {
+            crate::operator::log(
+                "artifact_validated",
+                Some(lease),
+                serde_json::json!({"artifact_id":artifact.artifact_id,"blob_digest":artifact.blob_digest,"duration_ms":artifact.duration_ms}),
+            );
+        }
         output
             .iter()
             .map(|a| self.store.artifact(&a.artifact_id))

@@ -358,12 +358,152 @@ impl Telegram {
         }
         Ok(count)
     }
+
+    pub async fn download_document(
+        &self,
+        id: &str,
+        limit: u64,
+        cancel: &CancellationToken,
+    ) -> Result<Vec<u8>> {
+        let request = async {
+            let response = self
+                .client
+                .post(self.endpoint("getFile"))
+                .json(&json!({"file_id":id}))
+                .send()
+                .await
+                .map_err(|_| anyhow!("Telegram file lookup transport failed"))?;
+            let file = Self::response(response, 65536).await?;
+            let path = file["file_path"]
+                .as_str()
+                .ok_or_else(|| anyhow!("Telegram file path missing"))?;
+            ensure!(
+                file["file_size"].as_u64().is_none_or(|size| size <= limit)
+                    && path.len() < 1024
+                    && !path.is_empty()
+                    && path
+                        .split('/')
+                        .all(|p| !p.is_empty() && p != "." && p != "..")
+                    && path
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"/_-.".contains(&b)),
+                "invalid Telegram file descriptor"
+            );
+            let response = self
+                .client
+                .get(format!("{}/file/bot{}/{path}", self.base, self.token))
+                .send()
+                .await
+                .map_err(|_| anyhow!("Telegram file download transport failed"))?;
+            ensure!(
+                response.status().is_success(),
+                "Telegram file download rejected"
+            );
+            let mut bytes = vec![];
+            let mut stream = response.bytes_stream();
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(|_| anyhow!("Telegram file download interrupted"))?;
+                ensure!(
+                    (bytes.len() as u64).saturating_add(chunk.len() as u64) <= limit,
+                    "Telegram document exceeds byte limit"
+                );
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(bytes)
+        };
+        tokio::select! {biased;_=cancel.cancelled()=>Err(anyhow!("Telegram file download cancelled")),result=tokio::time::timeout(Duration::from_secs(60),request)=>result.map_err(|_|anyhow!("Telegram file download deadline"))?}
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::{fs::Permissions, os::unix::fs::PermissionsExt};
+
+    #[tokio::test]
+    async fn document_download_bounds_paths_bytes_and_redacts_transport_errors() -> Result<()> {
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+        };
+        for (path, declared, body, limit, success, expected_requests) in [
+            ("documents/file.txt", 3, "abc", 4, true, 2),
+            ("../escape.txt", 3, "abc", 4, false, 1),
+            ("documents/file.txt", 5, "abcde", 4, false, 1),
+            ("documents/file.txt", 3, "oversized", 4, false, 2),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").await?;
+            let address = listener.local_addr()?;
+            let server = tokio::spawn(async move {
+                for n in 0..expected_requests {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let mut input = vec![];
+                    loop {
+                        let mut block = [0u8; 1024];
+                        let count = socket.read(&mut block).await.unwrap();
+                        assert!(count > 0);
+                        input.extend_from_slice(&block[..count]);
+                        if let Some(end) = input.windows(4).position(|w| w == b"\r\n\r\n") {
+                            let length = String::from_utf8_lossy(&input[..end])
+                                .lines()
+                                .find_map(|l| {
+                                    l.to_lowercase()
+                                        .strip_prefix("content-length:")
+                                        .and_then(|n| n.trim().parse::<usize>().ok())
+                                })
+                                .unwrap_or(0);
+                            if input.len() >= end + 4 + length {
+                                break;
+                            }
+                        }
+                    }
+                    let first_line = String::from_utf8_lossy(&input)
+                        .lines()
+                        .next()
+                        .unwrap()
+                        .to_owned();
+                    assert!(first_line.starts_with(if n == 0 {
+                        "POST /botsynthetic-token/getFile "
+                    } else {
+                        "GET /file/botsynthetic-token/documents/file.txt "
+                    }));
+                    let output = if n == 0 {
+                        json!({"ok":true,"result":{"file_path":path,"file_size":declared}})
+                            .to_string()
+                    } else {
+                        body.into()
+                    };
+                    socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{output}",output.len()).as_bytes()).await.unwrap();
+                }
+            });
+            let client =
+                Telegram::new("synthetic-token".into())?.fixture_base(format!("http://{address}"));
+            let result = client
+                .download_document("synthetic-file", limit, &CancellationToken::new())
+                .await;
+            assert_eq!(result.is_ok(), success);
+            if let Ok(bytes) = result {
+                assert_eq!(bytes, b"abc");
+            }
+            tokio::time::timeout(Duration::from_secs(5), server).await??;
+            let error = client
+                .download_document("synthetic-file", limit, &CancellationToken::new())
+                .await
+                .unwrap_err();
+            assert!(!format!("{error:?}").contains("synthetic-token"));
+            let cancel = CancellationToken::new();
+            cancel.cancel();
+            assert!(
+                client
+                    .download_document("synthetic-file", limit, &cancel)
+                    .await
+                    .unwrap_err()
+                    .to_string()
+                    .contains("cancelled")
+            );
+        }
+        Ok(())
+    }
 
     fn config() -> Config {
         let mut config = Config::default();

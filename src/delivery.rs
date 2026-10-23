@@ -652,6 +652,11 @@ impl DeliveryWorker {
             tx.execute("INSERT INTO telegram_file_ids VALUES(?1,?2,?3,?4,?5) ON CONFLICT(bot_id,representation,profile) DO UPDATE SET file_id=excluded.file_id,file_unique_id=excluded.file_unique_id",params![a.bot_id,prepared.representation,prepared.profile,id,unique])?;
         }
         tx.commit()?;
+        crate::operator::log(
+            "delivery_recorded",
+            None,
+            json!({"delivery_id":a.outbox_id,"attempt":a.number,"representation":prepared.representation,"state":state,"error_code":error}),
+        );
         Ok(true)
     }
 }

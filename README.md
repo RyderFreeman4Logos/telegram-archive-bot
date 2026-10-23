@@ -43,8 +43,12 @@ separate from compilation and deterministic testing.
 
 Producer and delivery contracts are documented in [speech](docs/speech.md),
 [media download](docs/media-download.md), [audio finalization](docs/audio-finalization.md)
-and [durable delivery](docs/delivery.md). These adapters are integrated into the
-service and real acceptance procedure in F19/F20.
+and [durable delivery](docs/delivery.md). The durable service dispatcher integrates
+these adapters. Follow [installation and operation](docs/operations.md) for an
+isolated offline replay, doctor/status, backup/restore, reload and Linux user
+systemd deployment. `run` explicitly activates a live Telegram poller; build,
+installation and replay do not activate it. Required real-provider and client
+acceptance remain separately recorded in F20.
 
 New application code is licensed under MIT OR Apache-2.0.
 

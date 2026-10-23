@@ -271,7 +271,21 @@ impl Store {
     fn claim_at(&self, time: i64) -> Result<Option<Lease>> {
         self.claim_for_phase(time, None)
     }
+    pub(crate) fn claim_control(&self) -> Result<Option<Lease>> {
+        self.claim_filtered(now(), Some(Phase::Fetch), Some(true))
+    }
+    pub(crate) fn claim_source(&self) -> Result<Option<Lease>> {
+        self.claim_filtered(now(), Some(Phase::Fetch), Some(false))
+    }
     fn claim_for_phase(&self, time: i64, phase: Option<Phase>) -> Result<Option<Lease>> {
+        self.claim_filtered(time, phase, None)
+    }
+    fn claim_filtered(
+        &self,
+        time: i64,
+        phase: Option<Phase>,
+        control: Option<bool>,
+    ) -> Result<Option<Lease>> {
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute("UPDATE jobs SET state='failed',error='absolute_deadline_exhausted',generation=generation+1 WHERE state IN ('queued','retryable','running') AND deadline<=?1",[time])?;
@@ -282,7 +296,7 @@ impl Store {
             return Ok(None);
         }
         let selected = loop {
-            let id=tx.query_row("SELECT id FROM jobs WHERE cancel_requested=0 AND (?2 IS NULL OR phase=?2) AND ((state IN ('queued','retryable') AND available_at<=?1) OR (state='running' AND lease_until<=?1)) ORDER BY available_at,rowid LIMIT 1",params![time,phase.map(Phase::as_str)],|r|r.get::<_,String>(0)).optional()?;
+            let id=tx.query_row("SELECT id FROM jobs WHERE cancel_requested=0 AND (?2 IS NULL OR phase=?2) AND (?3 IS NULL OR (json_extract(request,'$.kind')='command')=?3) AND ((state IN ('queued','retryable') AND available_at<=?1) OR (state='running' AND lease_until<=?1)) ORDER BY available_at,rowid LIMIT 1",params![time,phase.map(Phase::as_str),control],|r|r.get::<_,String>(0)).optional()?;
             let Some(id) = id else {
                 tx.commit()?;
                 return Ok(None);
