@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "recorded_utc": "2026-10-23",
+  "release_status": "candidate-pending-client-validation",
+  "supported_host": "Linux x86_64; local filesystem; unprivileged Bubblewrap namespaces for media",
+  "live_runtime_source_revision": "a844f7aa4312b16235bfb8e961725cfe6c75aa1b",
+  "delivery_helper_revision": "e86ba08",
+  "media_helper_revision": "0f8826f",
+  "adk_rust": "2.3.0",
+  "hymt_revision": "de670b21b26b3a88a8d711845c9e3d3b9af4c0ba",
+  "tools": {
+    "md2audio": {
+      "executable_sha256": "fa21d689b43fb9df8e5933cadc4db430e2654ee9360682eeb7389626d6af0838",
+      "version": "git 9795689e9e3787d8324af2678bcc06b0483bf503"
+    },
+    "hymt_bridge": {
+      "executable_sha256": "fd4f22cf60c8012de49b3e5aead7c547083aa3f6c9f9bb46c18940834aecb149",
+      "version": "0.1.0-rc.1; hymt de670b21b26b3a88a8d711845c9e3d3b9af4c0ba"
+    },
+    "yt_dlp": {
+      "executable_sha256": "eec026472904a5b1744aa7c79ae54826500b7096185d8afc1446037519f41f90",
+      "version": "2026.10.21"
+    },
+    "rust": {
+      "version": "rustc 1.99.1 (58cf8f9c3 2026-10-13)"
+    },
+    "ffmpeg": {
+      "version": "5.1.9-0+deb12u1"
+    },
+    "ffprobe": {
+      "version": "5.1.9-0+deb12u1"
+    },
+    "pdfinfo": {
+      "version": "22.12.0"
+    },
+    "pdftotext": {
+      "version": "22.12.0"
+    },
+    "git": {
+      "version": "2.39.5"
+    },
+    "bubblewrap": {
+      "version": "0.8.0"
+    }
+  },
+  "model": {
+    "configured_identifier": "abliterated-qwen-latest-27b-none",
+    "deployment_revision_basis": "operator-declared; remote weights not attested",
+    "metadata_semantic_fidelity_verified": false,
+    "translation_semantic_fidelity_verified": false,
+    "translation_cache_identity_verified": false
+  },
+  "tts": {
+    "backend": "Edge TTS through md2audio",
+    "voice": "zh-CN-YunyangNeural",
+    "live_synthesis": "passed",
+    "local_tts_live": "not-run",
+    "multi_speaker_live": "not-run; fixture-only"
+  },
+  "x": {
+    "official_api": "blocked-missing-X-bearer",
+    "fxembed_fallback": "live-partial",
+    "submissions": 2,
+    "canonical_revisions": 12,
+    "complete_observations": 12,
+    "error_observations": 2,
+    "telegram_messages_sent": 0
+  },
+  "audio_acceptance": [
+    {
+      "scenario": "short_narration",
+      "profile": "voice_note",
+      "container": "ogg",
+      "codec": "opus",
+      "bytes": 615505,
+      "sha256": "edda178cf91adbecf99407484899f970e9a95f2da99bfc81ebf6862d16880cec",
+      "measured_duration_ms": 104280,
+      "probe_duration_ms": 104287,
+      "full_decode": true,
+      "duration_consistent": true,
+      "duration_tolerance_ms": 1000,
+      "returned_type": "voice",
+      "returned_duration_seconds": 104,
+      "delivery_state": "confirmed",
+      "client_seek": "blocked-client-access",
+      "client_speed_controls": "blocked-client-access",
+      "send_receipt_sha256": "1f7754a686be1890ceaf8122796c4c57110dcb6aed07ec8995b02d620267acd5"
+    },
+    {
+      "scenario": "ordinary_track_under_20_minutes",
+      "profile": "audio_track",
+      "container": "mp3",
+      "codec": "mp3",
+      "bytes": 18909946,
+      "sha256": "5dc1d948781a5a5fea77a7ce24e61548791894487de6ad39d3ce27292caed802",
+      "measured_duration_ms": 1181596,
+      "probe_duration_ms": 1181616,
+      "full_decode": true,
+      "duration_consistent": true,
+      "duration_tolerance_ms": 1000,
+      "returned_type": "audio",
+      "returned_duration_seconds": 1182,
+      "delivery_state": "confirmed",
+      "client_seek": "blocked-client-access",
+      "client_speed_controls": "blocked-client-access",
+      "send_receipt_sha256": "c1bc17cb2ed2e13022025f6508a835d47bc6cf489f42e16ea5dc49260b58fc70"
+    },
+    {
+      "scenario": "ordinary_track_over_20_minutes",
+      "profile": "audio_track",
+      "container": "mp3",
+      "codec": "mp3",
+      "bytes": 23591040,
+      "sha256": "e03af9171586afb83ffe10cdfe646ebd8e631d569a946cde8f0f5d18c50d4967",
+      "measured_duration_ms": 1474292,
+      "probe_duration_ms": 1474351,
+      "full_decode": true,
+      "duration_consistent": true,
+      "duration_tolerance_ms": 1000,
+      "returned_type": "audio",
+      "returned_duration_seconds": 1474,
+      "delivery_state": "confirmed",
+      "client_seek": "blocked-client-access",
+      "client_speed_controls": "blocked-client-access",
+      "send_receipt_sha256": "94aad3ceb5f59fa7de8c32baec4e2543e40d3c60d047afa1fa36ee0e0ea6b18d"
+    }
+  ],
+  "clients": [
+    {
+      "client": "Telegram Desktop",
+      "version": "4.6.5+ds-2+b1",
+      "os": "Debian 12 Linux",
+      "seek": "blocked",
+      "speed": "blocked",
+      "reason": "No authorized graphical session: X display :0 rejected xwininfo/xprop authorization"
+    },
+    {
+      "client": "Telegram Android",
+      "version": "10.14.3 (49279)",
+      "os": "Android 14 / API 34; Pixel 4a (5G)",
+      "seek": "blocked",
+      "speed": "blocked",
+      "reason": "ADB device authorized but screen locked; NotificationShade, mAwake=false, mDreamingLockscreen=true"
+    }
+  ],
+  "activation": {
+    "production_poller_started": false,
+    "legacy_bot_modified": false,
+    "archive_remote_push_tested": "local bare-remote fixtures only"
+  }
+}
