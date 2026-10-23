@@ -297,6 +297,7 @@ pub struct Archive {
 pub struct Sources {
     pub x_bearer: Option<SecretRef>,
     pub x_enabled: bool,
+    pub x_fallback_enabled: bool,
     pub media_enabled: bool,
 }
 
