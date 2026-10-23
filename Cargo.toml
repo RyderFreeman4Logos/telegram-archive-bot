@@ -38,3 +38,7 @@ async-trait = "0.1"
 
 [profile.release]
 strip = true
+
+[[example]]
+name = "deliver_pending"
+test = true
