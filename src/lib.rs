@@ -6,6 +6,7 @@ pub mod media;
 pub mod network;
 pub mod process;
 pub mod sources;
+pub mod speech;
 pub mod storage;
 pub mod telegram;
 pub mod translation;

@@ -182,6 +182,9 @@ pub struct Synthesis {
     pub speakers: BTreeMap<String, String>,
     pub seed: u64,
     pub threads: u32,
+    pub volume: String,
+    pub pitch: i32,
+    pub subtitles: bool,
 }
 impl Default for Synthesis {
     fn default() -> Self {
@@ -195,6 +198,9 @@ impl Default for Synthesis {
             speakers: BTreeMap::new(),
             seed: 0,
             threads: 2,
+            volume: "2.00".into(),
+            pitch: 0,
+            subtitles: false,
         }
     }
 }
@@ -342,6 +348,55 @@ impl Config {
             self.synthesis.threads > 0,
             "synthesis threads must be positive"
         );
+        ensure!(
+            self.synthesis.pitch == 0,
+            "md2audio does not expose pitch control"
+        );
+        let volume = &self.synthesis.volume;
+        ensure!(
+            volume.len() <= 8
+                && volume.split('.').count() <= 2
+                && volume
+                    .split('.')
+                    .next()
+                    .is_some_and(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
+                && volume.split('.').nth(1).is_none_or(|v| !v.is_empty()
+                    && v.len() <= 2
+                    && v.bytes().all(|b| b.is_ascii_digit()))
+                && volume
+                    .parse::<f64>()
+                    .is_ok_and(|v| v.is_finite() && (0.0..=10.0).contains(&v)),
+            "invalid local volume"
+        );
+        ensure!(
+            !self.synthesis.voice.trim().is_empty() && !self.synthesis.language.trim().is_empty(),
+            "empty synthesis voice or language"
+        );
+        if self.synthesis.local && self.synthesis.enabled {
+            let speaker: usize = self
+                .synthesis
+                .voice
+                .parse()
+                .map_err(|_| anyhow::anyhow!("local voice must be a numeric speaker ID"))?;
+            ensure!(
+                speaker
+                    < if self.synthesis.local_model == "aishell3" {
+                        174
+                    } else {
+                        1
+                    },
+                "local speaker ID out of range"
+            );
+        }
+        for (speaker, voice) in &self.synthesis.speakers {
+            ensure!(
+                !speaker.trim().is_empty()
+                    && speaker == speaker.trim()
+                    && !speaker.contains(['*', ':', '：', '\n', '\r'])
+                    && !voice.trim().is_empty(),
+                "invalid speaker mapping"
+            );
+        }
         for endpoint in [&self.model.endpoint, &self.translation.endpoint] {
             let url = url::Url::parse(endpoint)
                 .map_err(|_| anyhow::anyhow!("invalid configured provider endpoint"))?;
