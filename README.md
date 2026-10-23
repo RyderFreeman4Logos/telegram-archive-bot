@@ -47,3 +47,5 @@ and [durable delivery](docs/delivery.md). These adapters are integrated into the
 service and real acceptance procedure in F19/F20.
 
 New application code is licensed under MIT OR Apache-2.0.
+
+See [semantic Git projection](docs/git-projection.md) for the independent archive destination, event recovery and separate push state.

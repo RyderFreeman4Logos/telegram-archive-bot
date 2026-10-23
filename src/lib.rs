@@ -8,6 +8,7 @@ pub mod jobs;
 pub mod media;
 pub mod network;
 pub mod process;
+pub mod projection;
 pub mod sources;
 pub mod speech;
 pub mod storage;
