@@ -81,3 +81,9 @@ is rejected. The fence now hashes the original database strings and compares
 normalized configuration values separately. After this change, formatting,
 all-target host Clippy and all **59 host tests** passed. The bridge was unchanged
 from its passing 1-test receipt.
+
+The latest F11 PR run [39989656309](https://github.com/RyderFreeman4Logos/telegram-archive-bot/actions/runs/39989656309)
+again failed before code checks: the Azure Ubuntu mirror did not finish package
+downloads within 180 seconds. CI now selects the official HTTPS Ubuntu archive
+for that mirror and omits optional recommended packages. Timeouts and required
+code checks remain in place; no result from this failed run counts as validation.
