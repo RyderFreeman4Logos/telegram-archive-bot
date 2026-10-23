@@ -54,3 +54,11 @@ user recording. Probe/decoder receipts do not certify audible completeness,
 Telegram seeking or client playback-speed controls.
 
 Container options follow [FFmpeg's muxer documentation](https://ffmpeg.org/ffmpeg-formats.html#mp3).
+
+Decoder versions can differ on the concatenation fixture. Hosted CI's first
+run produced a remux whose strict decode succeeded; the original test's
+version-specific requirement that remux must fail was therefore wrong. The
+fixture now accepts remux only when the finalizer independently verifies full
+decode, consistent duration and the expected roughly 20-second timeline. If
+remux remains invalid it requires rejection or explicit transcode. It never
+treats a successful remux command alone as validation.
