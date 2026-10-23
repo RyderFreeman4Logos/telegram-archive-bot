@@ -66,6 +66,8 @@ pub struct Job {
     pub deadline: Option<i64>,
     pub error: Option<String>,
     pub result: Option<Value>,
+    #[serde(default)]
+    pub force: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -116,8 +118,8 @@ impl std::fmt::Display for Failure {
 }
 impl std::error::Error for Failure {}
 
-fn load_job(conn: &rusqlite::Connection, id: &str) -> Result<Job> {
-    let mut statement = conn.prepare("SELECT j.id,j.bot_id,i.chat_id,i.user_id,j.request,j.config_id,j.state,j.phase,j.attempt,j.deadline,j.error,j.result,j.partial FROM jobs j JOIN inbox i ON i.bot_id=j.bot_id AND i.update_id=j.update_id WHERE j.id=?1")?;
+pub(crate) fn load_job(conn: &rusqlite::Connection, id: &str) -> Result<Job> {
+    let mut statement = conn.prepare("SELECT j.id,j.bot_id,i.chat_id,i.user_id,j.request,j.config_id,j.state,j.phase,j.attempt,j.deadline,j.error,j.result,j.partial,j.force_run FROM jobs j JOIN inbox i ON i.bot_id=j.bot_id AND i.update_id=j.update_id WHERE j.id=?1")?;
     let mut rows = statement.query([id])?;
     let row = rows.next()?.context("job unavailable")?;
     let state: String = row.get(6)?;
@@ -137,6 +139,7 @@ fn load_job(conn: &rusqlite::Connection, id: &str) -> Result<Job> {
         attempt: row.get(8)?,
         deadline: row.get(9)?,
         error: row.get(10)?,
+        force: row.get(13)?,
         result: row
             .get::<_, Option<String>>(11)?
             .map(|s| serde_json::from_str(&s))
@@ -157,8 +160,103 @@ pub(crate) fn fence(tx: &Transaction<'_>, lease: &Lease, time: i64) -> Result<()
             && serde_json::from_str::<Value>(&tools)? == lease.tools,
         Failure::InvalidInput
     );
-    let valid=tx.query_row("SELECT EXISTS(SELECT 1 FROM jobs WHERE id=?1 AND state='running' AND phase=?2 AND generation=?3 AND lease_until>?4 AND deadline>?4 AND cancel_requested=0)",params![lease.job.id,lease.job.phase.as_str(),lease.generation,time],|r|r.get::<_,bool>(0))?;
+    let valid=tx.query_row("SELECT EXISTS(SELECT 1 FROM jobs WHERE id=?1 AND state='running' AND phase=?2 AND generation=?3 AND lease_until>?4 AND deadline>?4 AND cancel_requested=0 AND config_id=?5 AND request=?6 AND force_run=?7)",params![lease.job.id,lease.job.phase.as_str(),lease.generation,time,lease.job.config_id,serde_json::to_string(&lease.job.request)?,lease.job.force],|r|r.get::<_,bool>(0))?;
     ensure!(valid, Failure::LeaseLost);
+    Ok(())
+}
+
+pub(crate) fn finish_in_tx(
+    tx: &Transaction<'_>,
+    lease: &Lease,
+    output: &Value,
+    next: Option<Phase>,
+    partial: bool,
+    time: i64,
+) -> Result<()> {
+    ensure!(
+        next != Some(lease.job.phase),
+        "phase cannot transition to itself"
+    );
+    fence(tx, lease, time)?;
+    let existing: Option<String> = tx
+        .query_row(
+            "SELECT output FROM phase_outputs WHERE job_id=?1 AND phase=?2",
+            params![lease.job.id, lease.job.phase.as_str()],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(existing) = existing {
+        ensure!(
+            serde_json::from_str::<Value>(&existing)? == *output,
+            "immutable phase output differs"
+        );
+    } else {
+        tx.execute(
+            "INSERT INTO phase_outputs VALUES(?1,?2,?3)",
+            params![
+                lease.job.id,
+                lease.job.phase.as_str(),
+                serde_json::to_string(output)?
+            ],
+        )?;
+    }
+    let state = if next.is_some() { "queued" } else { "complete" };
+    tx.execute("UPDATE jobs SET state=?1,phase=?2,result=?3,partial=MAX(partial,?4),lease_until=NULL,available_at=0 WHERE id=?5",params![state,next.unwrap_or(lease.job.phase).as_str(),serde_json::to_string(output)?,partial,lease.job.id])?;
+    Ok(())
+}
+
+pub(crate) fn scoped_job(conn: &rusqlite::Connection, scope: Scope, id: &str) -> Result<Job> {
+    let job = load_job(conn, id)?;
+    ensure!(
+        (job.bot_id, job.chat_id, job.user_id) == (scope.bot_id, scope.chat_id, scope.user_id),
+        "job unavailable in this scope"
+    );
+    Ok(job)
+}
+pub(crate) fn cancel_in_tx(tx: &Transaction<'_>, scope: Scope, id: &str) -> Result<bool> {
+    scoped_job(tx, scope, id)?;
+    let changed=tx.execute("UPDATE jobs SET state='cancelled',cancel_requested=1,generation=generation+1,lease_until=NULL WHERE id=?1 AND state IN ('queued','running','retryable','paused')",[id])?;
+    let deliveries=tx.execute("UPDATE outbox SET state='terminal',error='cancelled_before_send' WHERE job_id=?1 AND state IN ('pending','retryable','paused')",[id])?;
+    Ok(changed + deliveries > 0)
+}
+pub(crate) fn retry_in_tx(
+    tx: &Transaction<'_>,
+    scope: Scope,
+    id: &str,
+    phase: Phase,
+    time: i64,
+) -> Result<()> {
+    let job = scoped_job(tx, scope, id)?;
+    ensure!(
+        matches!(
+            job.state,
+            JobState::Failed | JobState::Cancelled | JobState::Paused
+        ) && job.phase == phase,
+        "only the current stopped phase can be retried; refresh creates a new run"
+    );
+    ensure!(
+        job.deadline.is_none_or(|d| d > time),
+        "job deadline exhausted; submit a new run"
+    );
+    let max: u32 = tx
+        .query_row(
+            "SELECT attempts FROM phase_attempts WHERE job_id=?1 AND phase=?2",
+            params![id, phase.as_str()],
+            |r| r.get(0),
+        )
+        .optional()?
+        .unwrap_or(0);
+    let config: String = tx.query_row(
+        "SELECT config FROM config_snapshots WHERE id=?1",
+        [job.config_id],
+        |r| r.get(0),
+    )?;
+    ensure!(
+        max < serde_json::from_str::<Config>(&config)?.limits.max_attempts,
+        "phase attempt budget exhausted; submit a new run"
+    );
+    let changed=tx.execute("UPDATE jobs SET state='queued',cancel_requested=0,error=NULL,generation=generation+1,available_at=0 WHERE id=?1 AND state IN ('failed','cancelled','paused') AND phase=?2",params![id,phase.as_str()])?;
+    ensure!(changed == 1, "job state changed concurrently");
     Ok(())
 }
 
@@ -276,37 +374,9 @@ impl Store {
         partial: bool,
         time: i64,
     ) -> Result<()> {
-        ensure!(
-            next != Some(lease.job.phase),
-            "phase cannot transition to itself"
-        );
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        fence(&tx, lease, time)?;
-        let existing: Option<String> = tx
-            .query_row(
-                "SELECT output FROM phase_outputs WHERE job_id=?1 AND phase=?2",
-                params![lease.job.id, lease.job.phase.as_str()],
-                |r| r.get(0),
-            )
-            .optional()?;
-        if let Some(existing) = existing {
-            ensure!(
-                serde_json::from_str::<Value>(&existing)? == *output,
-                "immutable phase output differs"
-            );
-        } else {
-            tx.execute(
-                "INSERT INTO phase_outputs VALUES(?1,?2,?3)",
-                params![
-                    lease.job.id,
-                    lease.job.phase.as_str(),
-                    serde_json::to_string(output)?
-                ],
-            )?;
-        }
-        let state = if next.is_some() { "queued" } else { "complete" };
-        tx.execute("UPDATE jobs SET state=?1,phase=?2,result=?3,partial=MAX(partial,?4),lease_until=NULL,available_at=0 WHERE id=?5",params![state,next.unwrap_or(lease.job.phase).as_str(),serde_json::to_string(output)?,partial,lease.job.id])?;
+        finish_in_tx(&tx, lease, output, next, partial, time)?;
         tx.commit()?;
         Ok(())
     }
@@ -357,44 +427,16 @@ impl Store {
     }
 
     pub fn cancel_job(&self, scope: Scope, id: &str) -> Result<bool> {
-        self.job_for(scope, id)?;
-        Ok(self.connection()?.execute("UPDATE jobs SET state='cancelled',cancel_requested=1,generation=generation+1,lease_until=NULL WHERE id=?1 AND state IN ('queued','running','retryable','paused')",[id])?>0)
-    }
-
-    pub fn retry_job(&self, scope: Scope, id: &str, phase: Phase) -> Result<()> {
-        let job = self.job_for(scope, id)?;
-        ensure!(
-            matches!(
-                job.state,
-                JobState::Failed | JobState::Cancelled | JobState::Paused
-            ) && job.phase == phase,
-            "only the current stopped phase can be retried; refresh creates a new run"
-        );
-        ensure!(
-            job.deadline.is_none_or(|d| d > now()),
-            "job deadline exhausted; submit a new run"
-        );
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let max: u32 = tx
-            .query_row(
-                "SELECT attempts FROM phase_attempts WHERE job_id=?1 AND phase=?2",
-                params![id, phase.as_str()],
-                |r| r.get(0),
-            )
-            .optional()?
-            .unwrap_or(0);
-        let config: String = tx.query_row(
-            "SELECT config FROM config_snapshots WHERE id=?1",
-            [job.config_id],
-            |r| r.get(0),
-        )?;
-        ensure!(
-            max < serde_json::from_str::<Config>(&config)?.limits.max_attempts,
-            "phase attempt budget exhausted; submit a new run"
-        );
-        let changed=tx.execute("UPDATE jobs SET state='queued',cancel_requested=0,error=NULL,generation=generation+1,available_at=0 WHERE id=?1 AND state IN ('failed','cancelled','paused') AND phase=?2",params![id,phase.as_str()])?;
-        ensure!(changed == 1, "job state changed concurrently");
+        let changed = cancel_in_tx(&tx, scope, id)?;
+        tx.commit()?;
+        Ok(changed)
+    }
+    pub fn retry_job(&self, scope: Scope, id: &str, phase: Phase) -> Result<()> {
+        let mut conn = self.connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        retry_in_tx(&tx, scope, id, phase, now())?;
         tx.commit()?;
         Ok(())
     }

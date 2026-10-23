@@ -306,7 +306,13 @@ impl Telegram {
         format!("{}/bot{}/{method}", self.base, self.token)
     }
 
-    pub(crate) async fn response(response: reqwest::Response, max_bytes: usize) -> Result<Value> {
+    #[cfg(test)]
+    pub(crate) fn fixture_base(mut self, base: String) -> Self {
+        self.base = base;
+        self
+    }
+
+    pub(crate) async fn envelope(response: reqwest::Response, max_bytes: usize) -> Result<Value> {
         let mut bytes = vec![];
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
@@ -319,6 +325,11 @@ impl Telegram {
         }
         let body: Value =
             serde_json::from_slice(&bytes).map_err(|_| anyhow!("invalid Telegram JSON"))?;
+        Ok(body)
+    }
+
+    pub(crate) async fn response(response: reqwest::Response, max_bytes: usize) -> Result<Value> {
+        let body = Self::envelope(response, max_bytes).await?;
         ensure!(
             body["ok"] == true,
             "Telegram API rejected request (code {})",

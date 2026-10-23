@@ -41,4 +41,9 @@ Never put bot tokens, cookies, personal archives or live configuration in this
 repository. Production activation and real client playback validation are
 separate from compilation and deterministic testing.
 
+Producer and delivery contracts are documented in [speech](docs/speech.md),
+[media download](docs/media-download.md), [audio finalization](docs/audio-finalization.md)
+and [durable delivery](docs/delivery.md). These adapters are integrated into the
+service and real acceptance procedure in F19/F20.
+
 New application code is licensed under MIT OR Apache-2.0.
