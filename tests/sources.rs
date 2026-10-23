@@ -226,7 +226,7 @@ fn schema_one_upgrade_preserves_existing_content() -> Result<()> {
     let conn = rusqlite::Connection::open(dir.path().join("archive.sqlite"))?;
     assert_eq!(
         conn.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))?,
-        2
+        telegram_archive_bot::storage::SCHEMA_VERSION
     );
     Ok(())
 }

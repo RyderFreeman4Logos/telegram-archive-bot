@@ -23,6 +23,10 @@ rusqlite = { version = "=0.32.1", features = ["bundled", "backup"] }
 fs2 = "0.4"
 tempfile = "3"
 libc = "0.2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "signal", "time", "sync", "fs", "io-util", "net"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart", "stream"] }
+futures-util = "0.3"
 
 [profile.release]
 strip = true

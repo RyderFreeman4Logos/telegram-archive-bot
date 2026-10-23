@@ -11,6 +11,7 @@ remain outside this repository.
 | F03 storage foundation | `cargo test --locked`; `cargo clippy --locked --all-targets -- -D warnings`; `cargo fmt` | 9 passed, including one child fixture entry point; lint clean | Backup integration and validated-media cataloguing await F17/F14 |
 | F03 CLI | Debug binary `init`, `verify`, `gc` against an isolated fresh configured directory | schema 1, 0 retained blobs, 0 abandoned files | Not a production state migration |
 | F04 | `cargo test --locked`; clippy all targets with warnings denied; formatting | 15 passed, including the child fixture; 6 source tests cover all six A/B/C orders, eight concurrent submissions, pinned revisions, counters/previews/deletion, aliases/queries/hash routes, missing stubs/cycles/budgets and schema-1 upgrade | Provider graph retrieval is integrated in F08/F09 |
+| F05 | `cargo test --locked`; clippy all targets with warnings denied; formatting | 18 passed, including three ingress checks: UTF-16/caption/document bounds, transaction rollback/replay/auth/bot scope, and an HTTP fixture observing offsets 0 then 43 only after commit; synthetic token absent from transport diagnostics | Live polling and service command integration await runtime/delivery integration; no real poller started |
 
 The storage checks include eight simultaneous same-digest publications and
 child-process exit at each durable publication checkpoint, followed by reopen,
