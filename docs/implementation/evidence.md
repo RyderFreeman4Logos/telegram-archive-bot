@@ -10,6 +10,7 @@ remain outside this repository.
 | F02 `1170578` | 3 configuration tests; fmt; clippy; example/check-config round trip; [CI](https://github.com/RyderFreeman4Logos/telegram-archive-bot/actions/runs/39911041712) | Passed | Service reload and tool-version snapshots await integration |
 | F03 storage foundation | `cargo test --locked`; `cargo clippy --locked --all-targets -- -D warnings`; `cargo fmt` | 9 passed, including one child fixture entry point; lint clean | Backup integration and validated-media cataloguing await F17/F14 |
 | F03 CLI | Debug binary `init`, `verify`, `gc` against an isolated fresh configured directory | schema 1, 0 retained blobs, 0 abandoned files | Not a production state migration |
+| F04 | `cargo test --locked`; clippy all targets with warnings denied; formatting | 15 passed, including the child fixture; 6 source tests cover all six A/B/C orders, eight concurrent submissions, pinned revisions, counters/previews/deletion, aliases/queries/hash routes, missing stubs/cycles/budgets and schema-1 upgrade | Provider graph retrieval is integrated in F08/F09 |
 
 The storage checks include eight simultaneous same-digest publications and
 child-process exit at each durable publication checkpoint, followed by reopen,

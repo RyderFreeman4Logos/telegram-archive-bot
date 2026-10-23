@@ -32,3 +32,26 @@ reopening the supported schema, size limits, symlinks, corruption, interruption
 at each publication checkpoint, actual child-process exit without destructors,
 and GC blocked by an active publisher. Process exit tests do not simulate a
 machine power failure; filesystem durability relies on the fsync contract.
+
+## Source revisions and pinned views
+
+X identities use the numeric status ID across supported x.com/twitter.com hosts
+and author handles. Generic URLs retain query parameters and fragments. Submitted
+aliases remain evidence and never merge unrelated sources by title or similarity.
+Normalized body and typed meaningful metadata form an immutable revision hash;
+counters, extraction versions and observed times belong to separate observations.
+Complete observations select the current revision. A preview or failed/deleted
+fetch cannot replace an existing complete capture. A later complete edit creates
+a new revision while earlier views retain their exact revision IDs.
+
+Schema 2 moves completeness entirely into observations: a partial and a complete
+fetch with identical normalized content can share one revision. Migration from
+schema 1 preserves its existing records. Typed quote/reply/retweet/link/edit edges
+retain their establishing observation and support unresolved source stubs.
+
+Views are immutable content-addressed manifests. Breadth-first expansion uses
+stable edge ordering, a visited set, explicit node/depth limits, and recorded
+omissions. Missing nodes remain explicit; hydration creates a new view. The
+manifest describes the revisions actually archived, without claiming which
+revision a historical author saw. Revision/observation/view changes also create
+projection events in the same short transaction.
