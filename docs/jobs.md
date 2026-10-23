@@ -24,4 +24,5 @@ and the ADK checkpoint thread; graph execution is integrated in F10 rather than
 implemented by the scheduler.
 
 Resource admission, the complete service loop, Telegram command responses, ADK
-execution and descendant cleanup are integration responsibilities of F07/F10/F15/F19.
+execution and descendant cleanup are integrated by F07/F10/F15/F19; see
+[operation](operations.md) for explicit activation and shutdown boundaries.

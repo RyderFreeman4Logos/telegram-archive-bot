@@ -563,6 +563,10 @@ impl ConfigManager {
     }
     pub fn reload(&mut self, path: &Path) -> Result<()> {
         let next = Config::load(path)?;
+        self.activate(next)
+    }
+    pub(crate) fn activate(&mut self, next: Config) -> Result<()> {
+        next.validate()?;
         ensure!(
             next.state_dir == self.current.state_dir
                 && next.telegram.bot_id == self.current.telegram.bot_id,

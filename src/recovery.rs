@@ -714,11 +714,33 @@ impl Store {
                 let source = value_string(value, "source_id")?;
                 let url = value_string(value, "url")?;
                 let method = value_string(value, "method")?;
-                ensure!(
-                    crate::sources::Identity::from_url(url)?.id() == source
-                        && method == "provider_identity_v1",
-                    "unsupported alias identity/method"
-                );
+                let valid = match method {
+                    "provider_identity_v1" => {
+                        crate::sources::Identity::from_url(url)?.id() == source
+                    }
+                    "yt_dlp_native_v1" => {
+                        crate::network::source_url(url)?;
+                        let (provider, external): (String, String) = tx.query_row(
+                            "SELECT provider,external_id FROM sources WHERE id=?1",
+                            [source],
+                            |r| Ok((r.get(0)?, r.get(1)?)),
+                        )?;
+                        records.iter().any(|(path, observation)| {
+                            path.starts_with("archive-v1/observations/")
+                                && observation["source_id"] == source
+                                && observation["extractor"] == "yt-dlp-probe-v1"
+                                && observation["evidence"]["submitted_url"] == url
+                                && observation["evidence"]["native"]["id"] == external
+                                && observation["evidence"]["native"]["extractor"]
+                                    .as_str()
+                                    .is_some_and(|name| {
+                                        provider == format!("media:{}", name.to_ascii_lowercase())
+                                    })
+                        })
+                    }
+                    _ => false,
+                };
+                ensure!(valid, "unsupported alias identity/method");
                 let encoded = serde_json::to_string(&(source, url, method))?;
                 ensure!(
                     *path == format!("archive-v1/aliases/{}.json", digest(encoded)),

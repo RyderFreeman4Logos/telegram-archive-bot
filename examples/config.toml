@@ -1,0 +1,54 @@
+# Copy outside the checkout. Replace YOUR_USER and verify every absolute tool path.
+state_dir = "/home/YOUR_USER/.local/state/telegram-archive-bot"
+
+[telegram]
+enabled = false
+bot_id = 1
+allowed_chats = [2]
+allowed_users = [3]
+narration_mode = "voice_note"
+# For authorized live activation: set enabled=true and real bot/chat/user IDs.
+# token = { kind = "env", name = "TELEGRAM_BOT_TOKEN" }
+
+[model]
+enabled = false
+# endpoint = "http://127.0.0.1:8080/v1"
+# name = "operator-chosen-model"
+# deployment_revision = "operator-assigned-weights-and-defaults-revision"
+# key = { kind = "env", name = "MODEL_API_KEY" }
+
+[translation]
+enabled = false
+# endpoint = "http://127.0.0.1:8080/v1"
+# model = "operator-chosen-model"
+# deployment_revision = "operator-assigned-weights-and-defaults-revision"
+# backend = "llama_cpp"
+# key = { kind = "env", name = "MODEL_API_KEY" }
+
+[synthesis]
+enabled = false
+local = false
+voice = "zh-CN-YunyangNeural"
+language = "zh"
+
+[sources]
+x_enabled = false
+x_fallback_enabled = false
+media_enabled = false
+# x_bearer = { kind = "env", name = "X_BEARER_TOKEN" }
+
+[tools]
+ffmpeg = "/usr/bin/ffmpeg"
+ffprobe = "/usr/bin/ffprobe"
+git = "/usr/bin/git"
+pdfinfo = "/usr/bin/pdfinfo"
+pdftotext = "/usr/bin/pdftotext"
+bubblewrap = "/usr/bin/bwrap"
+yt_dlp = "/home/YOUR_USER/.local/bin/yt-dlp"
+md2audio = "/home/YOUR_USER/.local/bin/md2audio"
+hymt_bridge = "/home/YOUR_USER/.local/bin/archive-hymt-bridge"
+
+[archive]
+directory = "/home/YOUR_USER/.local/share/telegram-archive"
+branch = "main"
+push = false

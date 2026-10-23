@@ -1,0 +1,23 @@
+[Unit]
+Description=Telegram Archive Bot
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/telegram-archive-bot/bot.env
+ExecStart=%h/.local/bin/telegram-archive-bot --config %h/.config/telegram-archive-bot/config.toml run
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/state/telegram-archive-bot %h/.local/share/telegram-archive
+
+[Install]
+WantedBy=default.target

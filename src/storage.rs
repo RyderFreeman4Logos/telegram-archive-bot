@@ -414,13 +414,18 @@ mod tests {
             let temp = tempfile::Builder::new()
                 .permissions(fs::Permissions::from_mode(0o700))
                 .tempdir()?;
-            let status = std::process::Command::new(std::env::current_exe()?)
+            let output = std::process::Command::new(std::env::current_exe()?)
                 .args(["--exact", "storage::tests::crash_child"])
                 .env("ARCHIVE_TEST_CRASH_ROOT", temp.path())
                 .env("ARCHIVE_TEST_CRASH_PHASE", phase)
-                .stdout(std::process::Stdio::null())
-                .status()?;
-            assert_eq!(status.code(), Some(91));
+                .output()?;
+            assert_eq!(
+                output.status.code(),
+                Some(91),
+                "phase={phase}; stdout={}; stderr={}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
             let store = Store::open(temp.path())?;
             assert_eq!(store.integrity()?, usize::from(phase == "catalogued"));
             assert!(store.gc(Duration::ZERO)? >= usize::from(phase != "catalogued"));

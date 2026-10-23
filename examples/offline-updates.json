@@ -1,0 +1,4 @@
+[
+  {"update_id":1,"message":{"message_id":1,"chat":{"id":2},"from":{"id":3},"text":"A synthetic Markdown document. **Keep this content.**"}},
+  {"update_id":2,"message":{"message_id":2,"chat":{"id":2},"from":{"id":3},"text":"A synthetic Markdown document. **Keep this content.**"}}
+]

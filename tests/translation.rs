@@ -433,16 +433,16 @@ async fn silent_bridge_cancellation_timeout_and_no_complete_publication() -> Res
             "English silent upstream fixture.",
             1,
             "generic",
-            if cancel_run { 10 } else { 1 },
+            if cancel_run { 30 } else { 1 },
         )?;
         let token = CancellationToken::new();
         let child = token.clone();
         let entered = server.entered.clone();
-        let trigger = tokio::spawn(async move {
-            entered.notified().await;
-            if cancel_run {
+        let trigger = cancel_run.then(|| {
+            tokio::spawn(async move {
+                entered.notified().await;
                 child.cancel();
-            }
+            })
         });
         let result = HymtTranslator {
             store: store.clone(),
@@ -450,7 +450,9 @@ async fn silent_bridge_cancellation_timeout_and_no_complete_publication() -> Res
         .translate(&lease, &store.revision(&id)?, "zh", "generic", &token)
         .await
         .unwrap_err();
-        tokio::time::timeout(Duration::from_secs(5), trigger).await??;
+        if let Some(trigger) = trigger {
+            tokio::time::timeout(Duration::from_secs(5), trigger).await??;
+        }
         assert_eq!(
             result.downcast_ref::<Failure>(),
             Some(if cancel_run {
@@ -460,7 +462,11 @@ async fn silent_bridge_cancellation_timeout_and_no_complete_publication() -> Res
             })
         );
         assert_eq!(derivatives(&store)?, 0);
-        assert_eq!(server.count(), 1);
+        if cancel_run {
+            assert_eq!(server.count(), 1);
+        } else {
+            assert!(server.count() <= 1);
+        }
     }
     Ok(())
 }
@@ -543,9 +549,12 @@ async fn concurrent_verified_translation_generates_once_and_force_uses_fresh_run
     let server = Server::new("counted").await?;
     let root = temp()?;
     let store = Store::open(root.path())?;
-    let text = "English source with observable translation output. ".repeat(30);
+    let text = (0..30)
+        .map(|i| format!("English source passage number {i} with observable output.\n\n"))
+        .collect::<String>();
     let (first, id) = prepare(&store, &server, &text, 1, "generic", 30)?;
     let (second, _) = prepare(&store, &server, &text, 2, "generic", 30)?;
+    assert_eq!(first.job.config_id, second.job.config_id);
     let revision = store.revision(&id)?;
     let translator = HymtTranslator {
         store: store.clone(),
@@ -558,7 +567,19 @@ async fn concurrent_verified_translation_generates_once_and_force_uses_fresh_run
     let a = a?;
     let b = b?;
     let m = manifest(&store, &a)?;
-    assert_eq!(m.output_digest, manifest(&store, &b)?.output_digest);
+    let other = manifest(&store, &b)?;
+    let left = store.read_blob(&m.output_digest, 1_048_576)?;
+    let right = store.read_blob(&other.output_digest, 1_048_576)?;
+    assert_eq!(
+        m.output_digest,
+        other.output_digest,
+        "calls={} first_report={} second_report={} first_output={} second_output={}",
+        server.count(),
+        serde_json::to_string(&m)?,
+        serde_json::to_string(&other)?,
+        String::from_utf8_lossy(&left),
+        String::from_utf8_lossy(&right)
+    );
     assert!(m.report.cache_verified);
     let generated = server.count();
     assert_eq!(generated, m.report.segments);

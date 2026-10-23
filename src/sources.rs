@@ -220,6 +220,17 @@ pub(crate) fn ensure_source(tx: &Transaction<'_>, identity: &Identity) -> Result
 
 impl Store {
     pub fn capture(&self, capture: &Capture) -> Result<Option<String>> {
+        let mut conn = self.connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let result = self.capture_in_tx(&tx, capture)?;
+        tx.commit()?;
+        Ok(result)
+    }
+    pub(crate) fn capture_in_tx(
+        &self,
+        tx: &Transaction<'_>,
+        capture: &Capture,
+    ) -> Result<Option<String>> {
         let has_content = matches!(capture.status, FetchStatus::Complete | FetchStatus::Partial);
         ensure!(
             has_content == capture.content.is_some(),
@@ -231,14 +242,12 @@ impl Store {
         if let Some(raw) = &capture.raw_digest {
             self.verify_blob(raw)?;
         }
-        let mut conn = self.connection()?;
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let event_start: i64 = tx.query_row(
             "SELECT COALESCE(MAX(id),0) FROM projection_events",
             [],
             |r| r.get(0),
         )?;
-        let source = ensure_source(&tx, &capture.identity)?;
+        let source = ensure_source(tx, &capture.identity)?;
         if let Some(alias) = &capture.submitted_url {
             ensure!(
                 Identity::from_url(alias)? == capture.identity,
@@ -275,7 +284,7 @@ impl Store {
         tx.execute("INSERT INTO observations(source_id,revision_id,observed_at,status,extractor,evidence,raw_digest) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![source,resulting,now(),capture.status.as_str(),capture.extractor,serde_json::to_string(&capture.evidence)?,capture.raw_digest])?;
         let observation = tx.last_insert_rowid();
         for related in &capture.relations {
-            let target = ensure_source(&tx, &related.target)?;
+            let target = ensure_source(tx, &related.target)?;
             tx.execute(
                 "INSERT INTO relations VALUES(?1,?2,?3,?4) ON CONFLICT DO NOTHING",
                 params![source, target, related.kind.as_str(), observation],
@@ -289,7 +298,6 @@ impl Store {
             "UPDATE projection_events SET group_key=?1 WHERE id>?2",
             params![format!("capture:{observation}"), event_start],
         )?;
-        tx.commit()?;
         Ok(resulting.or(previous))
     }
 
@@ -342,13 +350,23 @@ impl Store {
     }
 
     pub fn create_view(&self, root: &Identity, policy: ViewPolicy) -> Result<View> {
+        let mut conn = self.connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let view = self.create_view_in_tx(&tx, root, policy)?;
+        tx.commit()?;
+        Ok(view)
+    }
+    pub(crate) fn create_view_in_tx(
+        &self,
+        tx: &Transaction<'_>,
+        root: &Identity,
+        policy: ViewPolicy,
+    ) -> Result<View> {
         ensure!(
             policy.max_nodes > 0 && policy.max_nodes <= 10000 && policy.max_depth <= 10000,
             "invalid view budget"
         );
-        let mut conn = self.connection()?;
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let root_id = ensure_source(&tx, root)?;
+        let root_id = ensure_source(tx, root)?;
         let mut view = View {
             schema_version: 1,
             root_id: root_id.clone(),
@@ -401,8 +419,7 @@ impl Store {
                 view.edges.push(edge);
             }
         }
-        save_view(&tx, &view)?;
-        tx.commit()?;
+        save_view(tx, &view)?;
         Ok(view)
     }
 
