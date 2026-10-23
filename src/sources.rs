@@ -143,7 +143,7 @@ pub struct Related {
     pub kind: RelationKind,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Capture {
     pub identity: Identity,
     pub submitted_url: Option<String>,
@@ -198,6 +198,8 @@ pub struct View {
     pub members: Vec<ViewMember>,
     pub edges: Vec<ViewEdge>,
     pub omissions: Vec<Omission>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retrieval: Option<Value>,
 }
 
 impl View {
@@ -206,7 +208,7 @@ impl View {
     }
 }
 
-fn ensure_source(tx: &Transaction<'_>, identity: &Identity) -> Result<String> {
+pub(crate) fn ensure_source(tx: &Transaction<'_>, identity: &Identity) -> Result<String> {
     ensure!(
         !identity.provider.is_empty() && !identity.external_id.is_empty(),
         "empty provider identity"
@@ -345,6 +347,7 @@ impl Store {
             members: vec![],
             edges: vec![],
             omissions: vec![],
+            retrieval: None,
         };
         let mut visited = BTreeSet::new();
         let mut queue = VecDeque::from([(root_id, 0usize)]);
@@ -389,24 +392,7 @@ impl Store {
                 view.edges.push(edge);
             }
         }
-        let id = view.id()?;
-        tx.execute(
-            "INSERT INTO views VALUES(?1,?2,?3) ON CONFLICT DO NOTHING",
-            params![id, view.root_id, serde_json::to_string(&view)?],
-        )?;
-        for (ordinal, member) in view.members.iter().enumerate() {
-            tx.execute(
-                "INSERT INTO view_members VALUES(?1,?2,?3,?4,?5) ON CONFLICT DO NOTHING",
-                params![
-                    id,
-                    ordinal,
-                    member.source_id,
-                    member.revision_id,
-                    member.missing_reason
-                ],
-            )?;
-        }
-        tx.execute("INSERT INTO projection_events(kind,entity_id) VALUES('view',?1) ON CONFLICT DO NOTHING",[&id])?;
+        save_view(&tx, &view)?;
         tx.commit()?;
         Ok(view)
     }
@@ -423,4 +409,29 @@ impl Store {
     pub fn source_counts(&self) -> Result<(u64, u64, u64)> {
         Ok(self.connection()?.query_row("SELECT (SELECT COUNT(*) FROM sources),(SELECT COUNT(*) FROM source_revisions),(SELECT COUNT(*) FROM observations)",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?)
     }
+}
+
+pub(crate) fn save_view(tx: &Transaction<'_>, view: &View) -> Result<()> {
+    let id = view.id()?;
+    tx.execute(
+        "INSERT INTO views VALUES(?1,?2,?3) ON CONFLICT DO NOTHING",
+        params![id, view.root_id, serde_json::to_string(&view)?],
+    )?;
+    for (ordinal, member) in view.members.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO view_members VALUES(?1,?2,?3,?4,?5) ON CONFLICT DO NOTHING",
+            params![
+                id,
+                ordinal,
+                member.source_id,
+                member.revision_id,
+                member.missing_reason
+            ],
+        )?;
+    }
+    tx.execute(
+        "INSERT INTO projection_events(kind,entity_id) VALUES('view',?1) ON CONFLICT DO NOTHING",
+        [&id],
+    )?;
+    Ok(())
 }
