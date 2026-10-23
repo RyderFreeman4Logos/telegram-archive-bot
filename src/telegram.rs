@@ -143,7 +143,7 @@ pub fn parse_requests(message: &Message, config: &Config) -> Result<Vec<Request>
         let name = document.file_name.as_deref().unwrap_or("document.txt");
         let extension = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
         ensure!(
-            ["txt", "md", "markdown"].contains(&extension.as_str()),
+            ["txt", "md", "markdown", "pdf"].contains(&extension.as_str()),
             "unsupported document type"
         );
         let size = document.file_size.context("document size is required")?;
@@ -157,7 +157,8 @@ pub fn parse_requests(message: &Message, config: &Config) -> Result<Vec<Request>
                     "text/plain",
                     "text/markdown",
                     "text/x-markdown",
-                    "application/octet-stream"
+                    "application/octet-stream",
+                    "application/pdf"
                 ]
                 .contains(&mime.as_str()),
                 "unsupported document MIME"
@@ -166,7 +167,7 @@ pub fn parse_requests(message: &Message, config: &Config) -> Result<Vec<Request>
         requests.push(Request::Document {
             file_id: document.file_id.clone(),
             unique_id: document.file_unique_id.clone(),
-            name: name.rsplit('/').next().unwrap_or("document.txt").into(),
+            name: crate::documents::display_name(name),
             size,
         });
     }
@@ -393,6 +394,11 @@ mod tests {
         let requests = parse_requests(m, &config)?;
         assert_eq!(requests.len(), 2);
         assert!(matches!(&requests[1],Request::Document{name,..} if name=="same name.md"));
+        m.document.as_mut().unwrap().file_name = Some("..\\a.pdf".into());
+        m.document.as_mut().unwrap().mime_type = Some("application/pdf".into());
+        assert!(
+            matches!(&parse_requests(m, &config)?[1], Request::Document{name,..} if name=="a.pdf")
+        );
         m.document.as_mut().unwrap().file_size = Some(config.limits.input_bytes + 1);
         assert!(parse_requests(m, &config).is_err());
         Ok(())

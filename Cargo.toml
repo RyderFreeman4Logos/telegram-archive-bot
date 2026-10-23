@@ -27,6 +27,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "si
 tokio-util = { version = "0.7", features = ["rt"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart", "stream"] }
 futures-util = "0.3"
+dom_smoothie = "=0.18.2"
+htmd = "=0.5.6"
+encoding_rs = "0.8"
 
 [profile.release]
 strip = true

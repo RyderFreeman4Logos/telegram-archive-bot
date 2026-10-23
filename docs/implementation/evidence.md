@@ -16,6 +16,13 @@ remain outside this repository.
 | F07 supervisor | `cargo test --locked`; clippy all targets with warnings denied; formatting | 29 passed; fake Python tool verifies literal metacharacters, unique workspaces, parent environment clearing, synthetic secret redaction, TERM-resistant descendant termination/reaping, stdout/stderr flood, total disk limit, timeout, nonzero exit, missing tool and path confinement | Real yt-dlp/md2audio/FFmpeg adapters and startup version snapshot integration follow; aggregate disk scans are sampled, not a filesystem quota |
 | F08 | `cargo test --locked`; clippy all targets with warnings denied; formatting | 35 passed; X fixtures cover concurrent alias/cycle traversal with one fetch per identity, fallback provenance, full-content protection from excerpts, articles/repost references/tombstones, node/depth/reply/byte limits, cancellation and a silent-provider deadline; network unit checks reject private/special addresses | Public/official provider live availability remains untested; worker integration must fence final canonical selection |
 
+| F09 | `cargo test --locked`; all-target clippy with warnings denied; formatting | 42 passed, including four document fixtures and three additional HTTP checks: HTML/ThreadReader, Unicode/UTF-16/declared charset, concurrent same-name PDFs, real Poppler validation/extraction, failing/empty/invalid PDF outcomes, private redirects, credential-origin limits, mixed DNS, bounded streamed bodies, silent-body deadline and cancellation | No real webpage, Telegram attachment download, OCR, or client UI check is claimed; worker integration remains pending |
+
+F08 push CI [39914669239](https://github.com/RyderFreeman4Logos/telegram-archive-bot/actions/runs/39914669239)
+passed. Its subsequent PR check [39982782539](https://github.com/RyderFreeman4Logos/telegram-archive-bot/actions/runs/39982782539)
+initially timed out (exit 124) while downloading system packages, before code
+checks. The retry passed. The initial infrastructure failure is retained as a failed attempt.
+
 The storage checks include eight simultaneous same-digest publications and
 child-process exit at each durable publication checkpoint, followed by reopen,
 integrity verification, orphan collection and republishing. Injected exceptions
@@ -23,3 +30,11 @@ also cover these checkpoints. This proves recovery from the tested process
 failures, not physical power-loss behavior. Initial failures in fixture directory
 permissions and the GC test notification channel were corrected before the
 reported passing run.
+
+During F09 verification, the process fixture intermittently lost its entire
+`/tmp` root. A traced failure showed removal outside the traced test process
+tree, followed by `ENOENT` at process launch or directory checks. Process
+fixtures now use private temporary roots under the repository's ignored target
+directory. Production directory-loss errors remain failures. The final full
+suite passed, and 30 additional complete process suites passed with the isolated
+fixture roots.

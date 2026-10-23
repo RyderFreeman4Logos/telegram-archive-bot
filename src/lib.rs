@@ -1,4 +1,5 @@
 pub mod config;
+pub mod documents;
 pub mod jobs;
 pub mod network;
 pub mod process;

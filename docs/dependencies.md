@@ -14,6 +14,7 @@ Selected integration baselines, checked against public upstream on 2026-10-23 UT
 | md2audio | 94d2d1d8b2968ea10f891cceb48b7d68175d0843 | External executable / MIT |
 | FFmpeg / ffprobe | operator-provided | External executables; LGPL/GPL depends on build |
 | Poppler pdftotext / pdfinfo | operator-provided | External GPL executables |
+| dom_smoothie / htmd / encoding_rs | 0.18.2 / 0.5.6 / 0.8.42 | Rust extraction libraries / MIT / Apache-2.0 / MIT OR Apache-2.0 |
 | Git | operator-provided | External GPL executable |
 
 These tools are not bundled or relicensed. Installation must retain each tool's
