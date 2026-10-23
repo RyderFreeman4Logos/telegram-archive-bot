@@ -33,6 +33,24 @@ enum Command {
         #[arg(long, default_value_t = 100)]
         limit: usize,
     },
+    /// Create a verified SQLite/CAS backup in a new directory.
+    Backup { destination: std::path::PathBuf },
+    /// Verify a full backup without configuring or starting a bot.
+    VerifyBackup { source: std::path::PathBuf },
+    /// Restore a full backup to a new directory with external side effects paused.
+    RestoreBackup {
+        source: std::path::PathBuf,
+        destination: std::path::PathBuf,
+    },
+    /// Rebuild committed semantic content; binaries and operational state remain unavailable.
+    RestoreGit {
+        source: std::path::PathBuf,
+        destination: std::path::PathBuf,
+    },
+    /// Show whether a restored installation has a global recovery hold.
+    RecoveryStatus,
+    /// Clear only the global hold; old jobs/deliveries still require individual reconciliation.
+    ReleaseRecoveryHold,
     /// Collect abandoned staging files and uncommitted objects after the grace period.
     Gc,
 }
@@ -50,6 +68,35 @@ fn main() -> anyhow::Result<()> {
                 socket, executable, args,
             ))?;
             std::process::exit(status);
+        }
+        Command::VerifyBackup { source } => println!(
+            "{}",
+            serde_json::to_string_pretty(&Store::verify_backup(&source)?)?
+        ),
+        Command::RestoreBackup {
+            source,
+            destination,
+        } => println!(
+            "{}",
+            serde_json::to_string_pretty(&Store::restore_backup(&source, &destination)?)?
+        ),
+        Command::RestoreGit {
+            source,
+            destination,
+        } => {
+            let config = cli
+                .config
+                .map(|p| Config::load(&p))
+                .transpose()?
+                .unwrap_or_default();
+            let runtime = tokio::runtime::Runtime::new()?;
+            let receipt = runtime.block_on(Store::restore_git(
+                &source,
+                &destination,
+                &config,
+                &tokio_util::sync::CancellationToken::new(),
+            ))?;
+            println!("{}", serde_json::to_string_pretty(&receipt)?);
         }
         Command::ExampleConfig => println!("{}", toml::to_string_pretty(&Config::default())?),
         Command::CheckConfig => {
@@ -74,6 +121,19 @@ fn main() -> anyhow::Result<()> {
                         &tokio_util::sync::CancellationToken::new(),
                     ))?;
                     println!("{}", serde_json::to_string_pretty(&status)?);
+                }
+                Command::Backup { destination } => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&store.backup(&destination)?)?
+                ),
+                Command::RecoveryStatus => {
+                    println!("external_side_effects_paused={}", store.recovery_paused()?)
+                }
+                Command::ReleaseRecoveryHold => {
+                    store.release_recovery_hold()?;
+                    println!(
+                        "global hold cleared; old jobs/deliveries remain individually paused or unknown"
+                    );
                 }
                 Command::Gc => println!(
                     "collected {} abandoned files",

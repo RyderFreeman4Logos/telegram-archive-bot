@@ -321,6 +321,34 @@ impl Store {
                         format!("{PREFIX}/observations/{id}.json"),
                         &json!({"schema_version":1,"id":id.parse::<i64>()?,"source_id":source,"revision_id":rev,"observed_at":time,"status":status,"extractor":extractor,"evidence":serde_json::from_str::<Value>(&evidence)?,"raw_digest":raw,"relations":edges}),
                     )?;
+                    if let Some(original)=tx.query_row("SELECT manifest FROM semantic_unavailable WHERE kind='observation' AND entity_id=?1",[id],|r|r.get::<_,String>(0)).optional()? {
+                        insert_json(&mut files,format!("{PREFIX}/observations/{id}.json"),&serde_json::from_str::<Value>(&original)?)?;
+                    }
+                }
+                "semantic_derivative" => {
+                    self.blob_path(id)?;
+                    let (manifest,text):(String,Option<String>)=tx.query_row("SELECT manifest,text_digest FROM semantic_derivatives WHERE derivation_key=?1",[id],|r|Ok((r.get(0)?,r.get(1)?)))?;
+                    insert_json(
+                        &mut files,
+                        format!("{PREFIX}/derivatives/{id}/manifest.json"),
+                        &serde_json::from_str::<Value>(&manifest)?,
+                    )?;
+                    if let Some(text) = text {
+                        self.verify_blob(&text)?;
+                        files.insert(
+                            format!("{PREFIX}/derivatives/{id}/translation.md"),
+                            fs::read(self.blob_path(&text)?)?,
+                        );
+                    }
+                }
+                "semantic_artifact" => {
+                    self.blob_path(id)?;
+                    let manifest:String=tx.query_row("SELECT manifest FROM semantic_unavailable WHERE kind='artifact' AND entity_id=?1",[id],|r|r.get(0))?;
+                    insert_json(
+                        &mut files,
+                        format!("{PREFIX}/artifacts/{id}.json"),
+                        &serde_json::from_str::<Value>(&manifest)?,
+                    )?;
                 }
                 "view" => {
                     let manifest: String =
@@ -478,6 +506,10 @@ impl Store {
         max_events: usize,
         cancel: &CancellationToken,
     ) -> Result<ProjectionStatus> {
+        ensure!(
+            !self.recovery_paused()?,
+            "external side effects are paused after recovery"
+        );
         ensure!(max_events > 0, "projection batch limit must be positive");
         let destination = config
             .archive

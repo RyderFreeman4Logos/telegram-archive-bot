@@ -316,6 +316,12 @@ impl Store {
     fn claim_delivery(&self, bot: i64) -> Result<Option<Attempt>> {
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if tx.query_row("SELECT EXISTS(SELECT 1 FROM operational_holds)", [], |r| {
+            r.get::<_, bool>(0)
+        })? {
+            tx.commit()?;
+            return Ok(None);
+        }
         let time = now();
         tx.execute("UPDATE delivery_attempts SET state='unknown',finished_at=?1,error='worker_lost' WHERE state='sending' AND outbox_id IN (SELECT id FROM outbox WHERE state='sending' AND (lease_until IS NULL OR lease_until<=?1))",[time])?;
         tx.execute("UPDATE outbox SET state='unknown',error='worker_lost',lease_until=NULL WHERE state='sending' AND (lease_until IS NULL OR lease_until<=?1)",[time])?;
