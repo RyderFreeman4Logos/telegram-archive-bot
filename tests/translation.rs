@@ -118,7 +118,14 @@ impl Server {
                             } else if mode == "semantic_omission" {
                                 "A completed response omitting most of its source.".into()
                             } else {
-                                source.replace("English", "译文")
+                                source.replace(
+                                    "English",
+                                    &if mode == "counted" {
+                                        format!("译文{n}")
+                                    } else {
+                                        "译文".into()
+                                    },
+                                )
                             };
                             let finish = if mode == "length" { "length" } else { "stop" };
                             let chunk = json!({"choices":[{"index":0,"delta":{"content":text},"finish_reason":null}]});
@@ -208,6 +215,10 @@ fn prepare(
         json!({"update_id":id,"message":{"message_id":id,"chat":{"id":10},"from":{"id":20},"text":"fixture"}}),
     )?;
     store.ingest(&config, &update, &json!({"hymt":"pinned"}))?;
+    if id == 99 {
+        rusqlite::Connection::open(store.root().join("archive.sqlite"))?
+            .execute("UPDATE jobs SET force_run=1 WHERE update_id=99", [])?;
+    }
     let lease = store.claim_phase(Phase::Fetch)?.unwrap();
     let capture = Capture {
         identity: Identity::from_url("https://example.org/translation-fixture")?,
@@ -524,5 +535,43 @@ async fn bridge_detaches_configuration_before_first_segment() -> Result<()> {
     assert!(result.report.segments > 1);
     assert_eq!(result.profile, "generic");
     assert_eq!(result.config_id, lease.job.config_id);
+    Ok(())
+}
+
+#[tokio::test]
+async fn concurrent_verified_translation_generates_once_and_force_uses_fresh_run() -> Result<()> {
+    let server = Server::new("counted").await?;
+    let root = temp()?;
+    let store = Store::open(root.path())?;
+    let text = "English source with observable translation output. ".repeat(30);
+    let (first, id) = prepare(&store, &server, &text, 1, "generic", 30)?;
+    let (second, _) = prepare(&store, &server, &text, 2, "generic", 30)?;
+    let revision = store.revision(&id)?;
+    let translator = HymtTranslator {
+        store: store.clone(),
+    };
+    let cancel = CancellationToken::new();
+    let (a, b) = tokio::join!(
+        translator.translate(&first, &revision, "zh", "generic", &cancel),
+        translator.translate(&second, &revision, "zh", "generic", &cancel)
+    );
+    let a = a?;
+    let b = b?;
+    let m = manifest(&store, &a)?;
+    assert_eq!(m.output_digest, manifest(&store, &b)?.output_digest);
+    assert!(m.report.cache_verified);
+    let generated = server.count();
+    assert_eq!(generated, m.report.segments);
+    let (forced, _) = prepare(&store, &server, &text, 99, "generic", 30)?;
+    let fresh = translator
+        .translate(&forced, &revision, "zh", "generic", &cancel)
+        .await?;
+    assert_ne!(a, fresh);
+    assert_eq!(server.count(), generated * 2);
+    store.verify_blob(&a)?;
+    translator
+        .translate(&forced, &revision, "zh", "generic", &cancel)
+        .await?;
+    assert_eq!(server.count(), generated * 2);
     Ok(())
 }
