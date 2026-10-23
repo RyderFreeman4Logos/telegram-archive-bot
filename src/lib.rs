@@ -1,5 +1,6 @@
 pub mod config;
 pub mod jobs;
+pub mod process;
 pub mod sources;
 pub mod storage;
 pub mod telegram;
