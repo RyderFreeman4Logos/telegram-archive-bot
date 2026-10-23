@@ -47,6 +47,21 @@ fn retry_metric_counts_repeated_phase_attempts_and_excludes_phase_progress() -> 
     Ok(())
 }
 
+#[test]
+fn queue_metrics_preserve_partial_processing_state() -> Result<()> {
+    let (_root, store, config) = fixture()?;
+    let job = lease(&store, &config, 1, "Synthetic partial capture")?;
+    store.finish_phase(&job, &json!({}), None, true)?;
+    assert_eq!(
+        store.job_for(scope(), &job.job.id)?.state,
+        JobState::Partial
+    );
+    let metrics = crate::operator::metrics(&store)?;
+    assert_eq!(metrics["queues"]["jobs"]["partial"], 1);
+    assert!(metrics["queues"]["jobs"].get("complete").is_none());
+    Ok(())
+}
+
 #[tokio::test]
 async fn product_web_text_attachment_and_empty_text_pdf_keep_usable_originals() -> Result<()> {
     let (root, store, mut config) = fixture()?;

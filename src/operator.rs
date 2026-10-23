@@ -15,10 +15,13 @@ pub fn metrics(store: &Store) -> Result<Value> {
     let conn = store.connection()?;
     let mut counts = BTreeMap::new();
     for table in ["jobs", "outbox"] {
+        let state = if table == "jobs" {
+            "CASE WHEN state='complete' AND partial=1 THEN 'partial' ELSE state END"
+        } else {
+            "state"
+        };
         let rows = conn
-            .prepare(&format!(
-                "SELECT state,count(*) FROM {table} GROUP BY state"
-            ))?
+            .prepare(&format!("SELECT {state},count(*) FROM {table} GROUP BY 1"))?
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, u64>(1)?)))?
             .collect::<rusqlite::Result<BTreeMap<_, _>>>()?;
         counts.insert(table, rows);
