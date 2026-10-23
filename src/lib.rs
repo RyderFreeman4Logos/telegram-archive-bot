@@ -6,6 +6,7 @@ pub mod process;
 pub mod sources;
 pub mod storage;
 pub mod telegram;
+pub mod workflows;
 pub mod x;
 
 pub fn digest(bytes: impl AsRef<[u8]>) -> String {

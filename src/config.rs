@@ -356,6 +356,15 @@ impl Config {
                 self.model.deployment_revision != "unconfigured" && !self.model.name.is_empty(),
                 "model requires name and deployment_revision"
             );
+            ensure!(
+                self.model.output_tokens <= i32::MAX as usize
+                    && self
+                        .model
+                        .output_tokens
+                        .checked_add(768)
+                        .is_some_and(|reserved| self.model.input_tokens > reserved),
+                "model context must reserve output, framing, and source bytes"
+            );
         }
         if self.translation.enabled {
             ensure!(

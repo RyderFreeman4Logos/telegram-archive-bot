@@ -95,6 +95,7 @@ pub enum Failure {
     ToolMissing,
     ToolExit,
     ModelTruncated,
+    ModelRefused,
     Cancelled,
     LeaseLost,
     DiskFull,
@@ -143,7 +144,15 @@ fn load_job(conn: &rusqlite::Connection, id: &str) -> Result<Job> {
     })
 }
 
-fn fence(tx: &Transaction<'_>, lease: &Lease, time: i64) -> Result<()> {
+pub(crate) fn fence(tx: &Transaction<'_>, lease: &Lease, time: i64) -> Result<()> {
+    ensure!(
+        digest(format!(
+            "{}\n{}",
+            serde_json::to_string(&lease.config)?,
+            serde_json::to_string(&lease.tools)?
+        )) == lease.job.config_id,
+        Failure::InvalidInput
+    );
     let valid=tx.query_row("SELECT EXISTS(SELECT 1 FROM jobs WHERE id=?1 AND state='running' AND phase=?2 AND generation=?3 AND lease_until>?4 AND deadline>?4 AND cancel_requested=0)",params![lease.job.id,lease.job.phase.as_str(),lease.generation,time],|r|r.get::<_,bool>(0))?;
     ensure!(valid, Failure::LeaseLost);
     Ok(())
@@ -154,12 +163,18 @@ impl Store {
         self.claim_at(now())
     }
 
+    pub fn claim_phase(&self, phase: Phase) -> Result<Option<Lease>> {
+        self.claim_for_phase(now(), Some(phase))
+    }
     fn claim_at(&self, time: i64) -> Result<Option<Lease>> {
+        self.claim_for_phase(time, None)
+    }
+    fn claim_for_phase(&self, time: i64, phase: Option<Phase>) -> Result<Option<Lease>> {
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute("UPDATE jobs SET state='failed',error='absolute_deadline_exhausted',generation=generation+1 WHERE state IN ('queued','retryable','running') AND deadline<=?1",[time])?;
         let selected = loop {
-            let id=tx.query_row("SELECT id FROM jobs WHERE cancel_requested=0 AND ((state IN ('queued','retryable') AND available_at<=?1) OR (state='running' AND lease_until<=?1)) ORDER BY available_at,rowid LIMIT 1",[time],|r|r.get::<_,String>(0)).optional()?;
+            let id=tx.query_row("SELECT id FROM jobs WHERE cancel_requested=0 AND (?2 IS NULL OR phase=?2) AND ((state IN ('queued','retryable') AND available_at<=?1) OR (state='running' AND lease_until<=?1)) ORDER BY available_at,rowid LIMIT 1",params![time,phase.map(Phase::as_str)],|r|r.get::<_,String>(0)).optional()?;
             let Some(id) = id else {
                 tx.commit()?;
                 return Ok(None);

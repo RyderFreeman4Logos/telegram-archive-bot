@@ -18,6 +18,11 @@ remain outside this repository.
 
 | F09 | `cargo test --locked`; all-target clippy with warnings denied; formatting | 42 passed, including four document fixtures and three additional HTTP checks: HTML/ThreadReader, Unicode/UTF-16/declared charset, concurrent same-name PDFs, real Poppler validation/extraction, failing/empty/invalid PDF outcomes, private redirects, credential-origin limits, mixed DNS, bounded streamed bodies, silent-body deadline and cancellation | No real webpage, Telegram attachment download, OCR, or client UI check is claimed; worker integration remains pending |
 
+| F10 | `cargo test --locked`; all-target clippy with warnings denied; formatting | 51 passed, including nine ADK checks (one child entry point): schema/refusal/truncation failures, UTF-8 single-paragraph splitting, terminal response replacement, exact checkpoint frontier resume, abrupt exit before checkpoint with derivative reuse, silent/slow-stream cancellation/deadline, metadata worker transition, snapshot mutation rejection, and a real local 401 fixture proving one send and redacted diagnostics | Live model semantic acceptance and full daemon/source/media integration remain pending |
+
+F09 PR CI [39984359507](https://github.com/RyderFreeman4Logos/telegram-archive-bot/actions/runs/39984359507)
+passed; PR #30 was merged.
+
 F08 push CI [39914669239](https://github.com/RyderFreeman4Logos/telegram-archive-bot/actions/runs/39914669239)
 passed. Its subsequent PR check [39982782539](https://github.com/RyderFreeman4Logos/telegram-archive-bot/actions/runs/39982782539)
 initially timed out (exit 124) while downloading system packages, before code
