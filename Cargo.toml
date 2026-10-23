@@ -1,0 +1,21 @@
+[workspace]
+members = ["."]
+resolver = "2"
+
+[package]
+name = "telegram-archive-bot"
+version = "0.1.0-rc.1"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT OR Apache-2.0"
+description = "Recoverable Telegram archiving and validated audio delivery"
+repository = "https://github.com/RyderFreeman4Logos/telegram-archive-bot"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+strip = true

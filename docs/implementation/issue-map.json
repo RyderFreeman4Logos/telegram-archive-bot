@@ -1,0 +1,252 @@
+[
+  {
+    "spec_id": "F01",
+    "number": 1,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/1",
+    "milestone": "Foundation",
+    "dependencies": []
+  },
+  {
+    "spec_id": "F02",
+    "number": 2,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/2",
+    "milestone": "Foundation",
+    "dependencies": [
+      "F01"
+    ]
+  },
+  {
+    "spec_id": "F03",
+    "number": 3,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/3",
+    "milestone": "Foundation",
+    "dependencies": [
+      "F01",
+      "F02"
+    ]
+  },
+  {
+    "spec_id": "F04",
+    "number": 4,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/4",
+    "milestone": "Foundation",
+    "dependencies": [
+      "F03"
+    ]
+  },
+  {
+    "spec_id": "F05",
+    "number": 5,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/5",
+    "milestone": "Foundation",
+    "dependencies": [
+      "F02",
+      "F03"
+    ]
+  },
+  {
+    "spec_id": "F06",
+    "number": 6,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/6",
+    "milestone": "Foundation",
+    "dependencies": [
+      "F02",
+      "F03"
+    ]
+  },
+  {
+    "spec_id": "F07",
+    "number": 7,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/7",
+    "milestone": "Foundation",
+    "dependencies": [
+      "F01",
+      "F02"
+    ]
+  },
+  {
+    "spec_id": "F08",
+    "number": 8,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/8",
+    "milestone": "Sources and Processing",
+    "dependencies": [
+      "F02",
+      "F04",
+      "F06"
+    ]
+  },
+  {
+    "spec_id": "F09",
+    "number": 9,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/9",
+    "milestone": "Sources and Processing",
+    "dependencies": [
+      "F02",
+      "F04",
+      "F06",
+      "F07"
+    ]
+  },
+  {
+    "spec_id": "F10",
+    "number": 10,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/10",
+    "milestone": "Sources and Processing",
+    "dependencies": [
+      "F02",
+      "F03",
+      "F04",
+      "F06"
+    ]
+  },
+  {
+    "spec_id": "F11",
+    "number": 11,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/11",
+    "milestone": "Sources and Processing",
+    "dependencies": [
+      "F10",
+      "F02"
+    ]
+  },
+  {
+    "spec_id": "F12",
+    "number": 12,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/12",
+    "milestone": "Sources and Processing",
+    "dependencies": [
+      "F02",
+      "F03",
+      "F07"
+    ]
+  },
+  {
+    "spec_id": "F13",
+    "number": 13,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/13",
+    "milestone": "Sources and Processing",
+    "dependencies": [
+      "F02",
+      "F03",
+      "F07"
+    ]
+  },
+  {
+    "spec_id": "F14",
+    "number": 14,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/14",
+    "milestone": "Sources and Processing",
+    "dependencies": [
+      "F03",
+      "F07"
+    ]
+  },
+  {
+    "spec_id": "F15",
+    "number": 15,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/15",
+    "milestone": "Delivery and Archive",
+    "dependencies": [
+      "F03",
+      "F05",
+      "F06",
+      "F14"
+    ]
+  },
+  {
+    "spec_id": "F16",
+    "number": 16,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/16",
+    "milestone": "Delivery and Archive",
+    "dependencies": [
+      "F03",
+      "F04",
+      "F06"
+    ]
+  },
+  {
+    "spec_id": "F17",
+    "number": 17,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/17",
+    "milestone": "Delivery and Archive",
+    "dependencies": [
+      "F03",
+      "F04",
+      "F16"
+    ]
+  },
+  {
+    "spec_id": "F18",
+    "number": 18,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/18",
+    "milestone": "Sources and Processing",
+    "dependencies": [
+      "F03",
+      "F04",
+      "F06"
+    ]
+  },
+  {
+    "spec_id": "F19",
+    "number": 19,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/19",
+    "milestone": "Release",
+    "dependencies": [
+      "F01",
+      "F02",
+      "F06",
+      "F07",
+      "F17"
+    ]
+  },
+  {
+    "spec_id": "F20",
+    "number": 20,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/20",
+    "milestone": "Release",
+    "dependencies": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F08",
+      "F09",
+      "F10",
+      "F11",
+      "F12",
+      "F13",
+      "F14",
+      "F15",
+      "F16",
+      "F17",
+      "F18",
+      "F19"
+    ]
+  },
+  {
+    "spec_id": "F21",
+    "number": 21,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/21",
+    "milestone": "Post-MVP",
+    "dependencies": [
+      "F03",
+      "F04",
+      "F06",
+      "F10",
+      "F18"
+    ]
+  },
+  {
+    "spec_id": "F22",
+    "number": 22,
+    "url": "https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/22",
+    "milestone": "Post-MVP",
+    "dependencies": [
+      "F04",
+      "F17"
+    ]
+  }
+]

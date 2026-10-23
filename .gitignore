@@ -1,0 +1,12 @@
+/target/
+/.env
+/*.local.toml
+/state/
+/archive/
+*.sqlite*
+*.db*
+*.mp3
+*.m4a
+*.ogg
+*.wav
+*.log

@@ -1,0 +1,37 @@
+# Telegram Archive Bot
+
+Project-Spec: rust-telegram-archive-bot-v1
+
+A new Rust service for durable Telegram source archives and validated audio.
+SQLite and immutable content-addressed files are authoritative; a separately
+configured Git repository receives a deterministic semantic projection.
+
+**Status: implementation in progress. This is not a deployed or validated bot.**
+Core requirements are [F01–F20](docs/implementation/issue-map.json). Search (F21)
+and legacy import (F22) are optional. This repository has fresh history and
+contains no prior bot implementation or archive data.
+
+## Build and offline checks
+
+Install Rust through rustup, then clone this repository and run:
+
+```sh
+cargo build --locked
+cargo run --locked -- --help
+cargo test --locked
+cargo fmt --all --check
+cargo clippy --locked --all-targets -- -D warnings
+```
+
+The pinned toolchain is 1.99.1; the minimum supported compiler policy starts at
+1.99 and is raised explicitly with dependency changes. CI uses the pinned version.
+Offline tests require no provider credentials. Runtime adapters require FFmpeg,
+ffprobe, yt-dlp and md2audio; PDF extraction uses Poppler. See the
+[specification](docs/spec/root.md), [architecture](docs/spec/02.md), and
+[dependency inventory](docs/dependencies.md).
+
+Never put bot tokens, cookies, personal archives or live configuration in this
+repository. Production activation and real client playback validation are
+separate from compilation and deterministic testing.
+
+New application code is licensed under MIT OR Apache-2.0.
