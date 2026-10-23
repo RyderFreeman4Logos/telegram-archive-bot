@@ -450,14 +450,14 @@ impl XGraph {
                 .ok_or_else(|| anyhow::anyhow!("X bearer reference missing"))?
                 .read()?;
             providers.push(Arc::new(Official {
-                http: PublicHttp,
+                http: PublicHttp::default(),
                 bearer,
                 timeout,
             }));
         }
         if config.sources.x_fallback_enabled {
             providers.push(Arc::new(FxEmbed {
-                http: PublicHttp,
+                http: PublicHttp::default(),
                 timeout,
             }));
         }

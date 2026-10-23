@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 fn store() -> Result<(tempfile::TempDir, Store)> {
     let dir = tempfile::Builder::new()
         .permissions(Permissions::from_mode(0o700))
-        .tempdir()?;
+        .tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join("target"))?;
     let store = Store::open(dir.path())?;
     Ok((dir, store))
 }

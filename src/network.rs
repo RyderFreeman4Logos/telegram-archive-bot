@@ -61,11 +61,21 @@ pub struct Response {
     pub redirects: Vec<Url>,
     pub status: u16,
     pub content_type: String,
+    pub charset: Option<String>,
     pub bytes: Vec<u8>,
 }
 
 #[derive(Clone, Default)]
-pub struct PublicHttp;
+pub struct PublicHttp {
+    #[cfg(test)]
+    fixture: Option<FixtureRoute>,
+}
+#[cfg(test)]
+#[derive(Clone)]
+struct FixtureRoute {
+    addresses: Vec<SocketAddr>,
+    connect: SocketAddr,
+}
 impl PublicHttp {
     pub async fn get(
         &self,
@@ -80,6 +90,17 @@ impl PublicHttp {
             _=cancel.cancelled()=>Err(Failure::Cancelled),
             result=tokio::time::timeout(timeout,request)=>result.map_err(|_|Failure::Timeout)?,
         }
+    }
+
+    async fn resolve(&self, host: &str, port: u16) -> Result<Vec<SocketAddr>, Failure> {
+        #[cfg(test)]
+        if let Some(route) = &self.fixture {
+            return Ok(route.addresses.clone());
+        }
+        Ok(tokio::net::lookup_host((host, port))
+            .await
+            .map_err(|_| Failure::Network)?
+            .collect())
     }
 
     async fn get_inner(
@@ -97,13 +118,16 @@ impl PublicHttp {
                 .ok_or(Failure::InvalidInput)?
                 .trim_matches(['[', ']']);
             let port = url.port_or_known_default().ok_or(Failure::InvalidInput)?;
-            let addresses = tokio::net::lookup_host((host, port))
-                .await
-                .map_err(|_| Failure::Network)?
-                .collect::<Vec<SocketAddr>>();
+            let addresses = self.resolve(host, port).await?;
             if addresses.is_empty() || addresses.iter().any(|a| !public_ip(a.ip())) {
                 return Err(Failure::InvalidInput);
             }
+            #[cfg(test)]
+            let addresses = if let Some(route) = &self.fixture {
+                vec![route.connect]
+            } else {
+                addresses
+            };
             // Pin the checked addresses for this hop; the HTTP client cannot re-resolve them.
             let client = reqwest::Client::builder()
                 .no_proxy()
@@ -148,11 +172,17 @@ impl PublicHttp {
             {
                 return Err(Failure::InvalidOutput);
             }
-            let content_type = response
+            let content_header = response
                 .headers()
                 .get(reqwest::header::CONTENT_TYPE)
                 .and_then(|h| h.to_str().ok())
-                .unwrap_or("")
+                .unwrap_or("");
+            let charset = content_header.split(';').skip(1).find_map(|part| {
+                let (key, value) = part.trim().split_once('=')?;
+                key.eq_ignore_ascii_case("charset")
+                    .then(|| value.trim().trim_matches(['\'', '"']).to_owned())
+            });
+            let content_type = content_header
                 .split(';')
                 .next()
                 .unwrap_or("")
@@ -172,6 +202,7 @@ impl PublicHttp {
                 redirects,
                 status: status.as_u16(),
                 content_type,
+                charset,
                 bytes,
             });
         }
@@ -215,5 +246,145 @@ mod tests {
             assert!(source_url(url).is_err(), "{url}");
         }
         assert!(source_url("https://example.org/?s=one#/route").is_ok());
+    }
+    async fn fixture(reply: &'static [u8]) -> (PublicHttp, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let connect = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0; 4096];
+            let _ = socket.read(&mut buf).await;
+            socket.write_all(reply).await.unwrap();
+        });
+        (
+            PublicHttp {
+                fixture: Some(FixtureRoute {
+                    addresses: vec!["1.1.1.1:80".parse().unwrap()],
+                    connect,
+                }),
+            },
+            server,
+        )
+    }
+
+    #[tokio::test]
+    async fn redirects_cannot_reach_private_addresses_or_forward_auth() {
+        let cancel = CancellationToken::new();
+        for (reply, bearer) in [
+            (b"HTTP/1.1 302 Found\r\nLocation: http://169.254.169.254/latest/\r\nContent-Length: 0\r\n\r\n".as_slice(), None),
+            (b"HTTP/1.1 302 Found\r\nLocation: http://another.invalid/\r\nContent-Length: 0\r\n\r\n".as_slice(), Some("synthetic-secret")),
+        ] {
+            let (http, server) = fixture(reply).await;
+            assert!(matches!(http.get("http://fixture.invalid/start", 100, Duration::from_secs(2), bearer, &cancel).await, Err(Failure::InvalidInput)));
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_and_declared_sizes_are_bounded_and_charset_retained() {
+        let cancel = CancellationToken::new();
+        for reply in [
+            b"HTTP/1.1 200 OK\r\nContent-Length: 10000\r\n\r\n".as_slice(),
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n6\r\n123456\r\n0\r\n\r\n"
+                .as_slice(),
+        ] {
+            let (http, server) = fixture(reply).await;
+            assert!(matches!(
+                http.get(
+                    "http://fixture.invalid/file",
+                    5,
+                    Duration::from_secs(2),
+                    None,
+                    &cancel
+                )
+                .await,
+                Err(Failure::InvalidOutput)
+            ));
+            server.await.unwrap();
+        }
+        let (http, server) = fixture(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=\"UTF-8\"\r\nContent-Length: 3\r\n\r\nabc").await;
+        let response = http
+            .get(
+                "http://fixture.invalid/file",
+                5,
+                Duration::from_secs(2),
+                None,
+                &cancel,
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.bytes, b"abc");
+        assert_eq!(response.charset.as_deref(), Some("UTF-8"));
+        server.await.unwrap();
+        let mut mixed = http;
+        mixed
+            .fixture
+            .as_mut()
+            .unwrap()
+            .addresses
+            .push("10.0.0.1:80".parse().unwrap());
+        assert!(matches!(
+            mixed
+                .get(
+                    "http://fixture.invalid/file",
+                    5,
+                    Duration::from_secs(2),
+                    None,
+                    &cancel
+                )
+                .await,
+            Err(Failure::InvalidInput)
+        ));
+    }
+    #[tokio::test]
+    async fn deadline_and_cancellation_cover_a_silent_body() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for cancelled in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let connect = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buf = [0; 4096];
+                let _ = socket.read(&mut buf).await;
+                socket
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\n")
+                    .await
+                    .unwrap();
+                let mut byte = [0];
+                assert_eq!(socket.read(&mut byte).await.unwrap(), 0);
+            });
+            let http = PublicHttp {
+                fixture: Some(FixtureRoute {
+                    addresses: vec!["1.1.1.1:80".parse().unwrap()],
+                    connect,
+                }),
+            };
+            let token = CancellationToken::new();
+            if cancelled {
+                let copy = token.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    copy.cancel();
+                });
+            }
+            let result = http
+                .get(
+                    "http://fixture.invalid/slow",
+                    10,
+                    Duration::from_millis(100),
+                    None,
+                    &token,
+                )
+                .await;
+            assert!(
+                matches!(result, Err(Failure::Cancelled)) && cancelled
+                    || matches!(result, Err(Failure::Timeout)) && !cancelled
+            );
+            tokio::time::timeout(Duration::from_secs(2), server)
+                .await
+                .unwrap()
+                .unwrap();
+        }
     }
 }
