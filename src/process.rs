@@ -68,15 +68,40 @@ pub struct ToolOutput {
 pub struct ToolError {
     pub kind: ToolFailure,
     pub report: Option<Box<ToolOutput>>,
+    pub io_operation: Option<(&'static str, Option<i32>)>,
 }
 impl From<ToolFailure> for ToolError {
     fn from(kind: ToolFailure) -> Self {
-        Self { kind, report: None }
+        Self {
+            kind,
+            report: None,
+            io_operation: None,
+        }
+    }
+}
+impl ToolError {
+    fn io(operation: &'static str, error: std::io::Error) -> Self {
+        Self {
+            kind: ToolFailure::Io,
+            report: None,
+            io_operation: Some((operation, error.raw_os_error())),
+        }
+    }
+    fn task(operation: &'static str) -> Self {
+        Self {
+            kind: ToolFailure::Io,
+            report: None,
+            io_operation: Some((operation, None)),
+        }
     }
 }
 impl std::fmt::Display for ToolError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.kind.fmt(f)
+        self.kind.fmt(f)?;
+        if let Some((operation, code)) = self.io_operation {
+            write!(f, " during {operation} (os error {code:?})")?;
+        }
+        Ok(())
     }
 }
 impl std::error::Error for ToolError {}
@@ -140,33 +165,45 @@ pub fn confined_file(root: &Path, reported: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn workspace_size(root: &Path, limit: u64) -> std::result::Result<(), ToolFailure> {
+fn workspace_entry_metadata(path: &Path) -> std::result::Result<Option<fs::Metadata>, ToolError> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) => Ok(Some(meta)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(ToolError::io("workspace metadata", e)),
+    }
+}
+fn workspace_size(root: &Path, limit: u64) -> std::result::Result<(), ToolError> {
     let mut total = 0u64;
     let mut entries = 0u32;
     let mut dirs = vec![root.to_path_buf()];
     while let Some(dir) = dirs.pop() {
-        for entry in fs::read_dir(dir).map_err(|_| ToolFailure::Io)? {
-            let entry = entry.map_err(|_| ToolFailure::Io)?;
-            let meta = entry
-                .path()
-                .symlink_metadata()
-                .map_err(|_| ToolFailure::Io)?;
+        let listing = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(e) if dir != root && e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(ToolError::io("workspace read_dir", e)),
+        };
+        for entry in listing {
+            let entry = entry.map_err(|e| ToolError::io("workspace entry", e))?;
+            // Atomic rename may remove a directory entry between enumeration and stat.
+            let Some(meta) = workspace_entry_metadata(&entry.path())? else {
+                continue;
+            };
             entries += 1;
             if entries > 10000 {
-                return Err(ToolFailure::WorkLimit);
+                return Err(ToolFailure::WorkLimit.into());
             }
             if meta.file_type().is_symlink() {
-                return Err(ToolFailure::UnsafeOutput);
+                return Err(ToolFailure::UnsafeOutput.into());
             }
             if meta.is_dir() {
                 dirs.push(entry.path());
             } else if meta.is_file() {
                 total = total.saturating_add(meta.len());
                 if total > limit {
-                    return Err(ToolFailure::WorkLimit);
+                    return Err(ToolFailure::WorkLimit.into());
                 }
             } else {
-                return Err(ToolFailure::UnsafeOutput);
+                return Err(ToolFailure::UnsafeOutput.into());
             }
         }
     }
@@ -269,7 +306,7 @@ impl Tool {
             &mut File::open(&executable).map_err(|_| ToolFailure::Missing)?,
             &mut hash,
         )
-        .map_err(|_| ToolFailure::Io)?;
+        .map_err(|e| ToolError::io("executable hash", e))?;
         let executable_digest = format!("{:x}", hash.finalize());
         static SUBREAPER: OnceLock<bool> = OnceLock::new();
         if !*SUBREAPER
@@ -310,7 +347,7 @@ impl Tool {
         }
         let mut command = Command::from(command);
         command.kill_on_drop(true);
-        let mut child = command.spawn().map_err(|_| ToolFailure::Io)?;
+        let mut child = command.spawn().map_err(|e| ToolError::io("spawn", e))?;
         let group = child.id().ok_or(ToolFailure::Io)? as i32;
         let mut guard = GroupGuard(group, true);
         let overflow = Arc::new(AtomicBool::new(false));
@@ -330,11 +367,11 @@ impl Tool {
         let mut status = None;
         let mut failure = loop {
             tokio::select! {biased;
-                _=cancel.cancelled()=>break Some(ToolFailure::Cancelled),
-                _=&mut deadline=>break Some(ToolFailure::Timeout),
-                result=child.wait()=>{status=Some(result.map_err(|_|ToolFailure::Io)?);break None;},
+                _=cancel.cancelled()=>break Some(ToolFailure::Cancelled.into()),
+                _=&mut deadline=>break Some(ToolFailure::Timeout.into()),
+                result=child.wait()=>{status=Some(result.map_err(|e|ToolError::io("wait",e))?);break None;},
                 _=check.tick()=>{
-                    if overflow.load(Ordering::SeqCst) {break Some(ToolFailure::LogLimit);}
+                    if overflow.load(Ordering::SeqCst) {break Some(ToolFailure::LogLimit.into());}
                     if let Err(error)=workspace_size(&self.directory,self.work_bytes) {break Some(error);}
                 }
             }
@@ -349,29 +386,34 @@ impl Tool {
         tokio::time::sleep(Duration::from_millis(100)).await;
         signal_group(group, libc::SIGKILL);
         if status.is_none() {
-            status = Some(child.wait().await.map_err(|_| ToolFailure::Io)?);
+            status = Some(
+                child
+                    .wait()
+                    .await
+                    .map_err(|e| ToolError::io("wait after kill", e))?,
+            );
         }
         tokio::task::spawn_blocking(move || reap_group(group))
             .await
-            .map_err(|_| ToolFailure::Io)?;
+            .map_err(|_| ToolError::task("reaper task"))?;
         guard.1 = false;
         let stdout = stdout
             .await
-            .map_err(|_| ToolFailure::Io)?
-            .map_err(|_| ToolFailure::Io)?;
+            .map_err(|_| ToolError::task("capture task"))?
+            .map_err(|e| ToolError::io("capture read", e))?;
         let stderr = stderr
             .await
-            .map_err(|_| ToolFailure::Io)?
-            .map_err(|_| ToolFailure::Io)?;
+            .map_err(|_| ToolError::task("capture task"))?
+            .map_err(|e| ToolError::io("capture read", e))?;
         if overflow.load(Ordering::SeqCst) {
-            failure.get_or_insert(ToolFailure::LogLimit);
+            failure.get_or_insert(ToolFailure::LogLimit.into());
         }
         if let Err(error) = workspace_size(&self.directory, self.work_bytes) {
             failure.get_or_insert(error);
         }
         let status = status.ok_or(ToolFailure::Io)?;
         if !status.success() {
-            failure.get_or_insert(ToolFailure::Nonzero);
+            failure.get_or_insert(ToolFailure::Nonzero.into());
         }
         use std::os::unix::process::ExitStatusExt;
         let output = ToolOutput {
@@ -382,11 +424,9 @@ impl Tool {
             exit_code: status.code(),
             signal: status.signal(),
         };
-        if let Some(kind) = failure {
-            return Err(ToolError {
-                kind,
-                report: Some(Box::new(output)),
-            });
+        if let Some(mut error) = failure {
+            error.report = Some(Box::new(output));
+            return Err(error);
         }
         Ok(output)
     }
@@ -409,5 +449,33 @@ mod tests {
             redact("prefix synthetic-sec".into(), &[secret]),
             "prefix [REDACTED]"
         );
+    }
+}
+
+#[cfg(test)]
+mod io_diagnostics_tests {
+    use super::*;
+    #[test]
+    fn vanished_directory_entry_is_not_an_io_failure() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("index.lock");
+        fs::write(&path, b"temporary index")?;
+        let entry = fs::read_dir(dir.path())?.next().unwrap()?;
+        fs::rename(&path, dir.path().join("index"))?;
+        assert!(workspace_entry_metadata(&entry.path())?.is_none());
+        workspace_size(dir.path(), 1024)?;
+        assert!(workspace_size(dir.path(), 1).is_err());
+        Ok(())
+    }
+    #[test]
+    fn workspace_io_failure_retains_operation_and_numeric_error() {
+        let error =
+            workspace_size(Path::new("/definitely-absent-archive-io-fixture"), 1024).unwrap_err();
+        assert_eq!(error.kind, ToolFailure::Io);
+        assert_eq!(
+            error.io_operation,
+            Some(("workspace read_dir", Some(libc::ENOENT)))
+        );
+        assert!(error.to_string().contains("workspace read_dir"));
     }
 }
