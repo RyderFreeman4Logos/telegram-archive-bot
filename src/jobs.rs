@@ -491,6 +491,7 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("backend");
+        old["tools"].as_object_mut().unwrap().remove("bubblewrap");
         let old = serde_json::to_string(&old)?;
         let id = digest(format!("{old}\n{tools}"));
         conn.execute(

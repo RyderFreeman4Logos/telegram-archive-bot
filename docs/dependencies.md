@@ -16,6 +16,7 @@ Selected integration baselines, checked against public upstream on 2026-10-23 UT
 | Poppler pdftotext / pdfinfo | operator-provided | External GPL executables |
 | dom_smoothie / htmd / encoding_rs | 0.18.2 / 0.5.6 / 0.8.42 | Rust extraction libraries / MIT / Apache-2.0 / MIT OR Apache-2.0 |
 | Git | operator-provided | External GPL executable |
+| Bubblewrap | operator-provided; local fixture 0.8.0 | External LGPL-2.0-or-later executable; required Linux namespace boundary |
 
 These tools are not bundled or relicensed. Installation must retain each tool's
 license and satisfy its distribution requirements. Provider terms and media

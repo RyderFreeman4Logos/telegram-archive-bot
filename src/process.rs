@@ -49,6 +49,7 @@ pub struct Tool {
     pub directory: PathBuf,
     pub timeout: Duration,
     pub log_bytes: usize,
+    pub stdout_bytes: Option<usize>,
     pub work_bytes: u64,
     pub secrets: Vec<String>,
 }
@@ -248,6 +249,7 @@ impl Tool {
         if !self.executable.is_absolute()
             || self.timeout.is_zero()
             || self.log_bytes == 0
+            || self.stdout_bytes == Some(0)
             || self.work_bytes == 0
         {
             return Err(ToolFailure::InvalidConfiguration.into());
@@ -314,7 +316,7 @@ impl Tool {
         let overflow = Arc::new(AtomicBool::new(false));
         let stdout = tokio::spawn(capture(
             child.stdout.take().ok_or(ToolFailure::Io)?,
-            self.log_bytes,
+            self.stdout_bytes.unwrap_or(self.log_bytes),
             overflow.clone(),
         ));
         let stderr = tokio::spawn(capture(

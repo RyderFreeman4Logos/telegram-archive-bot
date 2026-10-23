@@ -362,6 +362,7 @@ impl Documents {
             environment: BTreeMap::new(),
             timeout: deadline.saturating_duration_since(tokio::time::Instant::now()),
             log_bytes: self.config.limits.log_bytes,
+            stdout_bytes: None,
             work_bytes: self.config.limits.work_bytes,
             secrets: vec![],
         };

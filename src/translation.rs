@@ -253,6 +253,7 @@ impl Translator for HymtTranslator {
             directory: workspace.path().into(),
             timeout: Duration::from_secs(budget),
             log_bytes: config.limits.log_bytes,
+            stdout_bytes: None,
             work_bytes: config.limits.work_bytes,
             secrets: vec![key],
         };

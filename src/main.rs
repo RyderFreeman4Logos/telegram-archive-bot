@@ -13,6 +13,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    #[command(hide = true)]
+    MediaEgressRelay {
+        socket: std::path::PathBuf,
+        executable: std::path::PathBuf,
+        #[arg(last = true)]
+        args: Vec<std::ffi::OsString>,
+    },
     /// Validate configuration; never sends network requests.
     CheckConfig,
     /// Print a non-secret example configuration.
@@ -28,6 +35,17 @@ enum Command {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::MediaEgressRelay {
+            socket,
+            executable,
+            args,
+        } => {
+            let runtime = tokio::runtime::Runtime::new()?;
+            let status = runtime.block_on(telegram_archive_bot::egress::relay(
+                socket, executable, args,
+            ))?;
+            std::process::exit(status);
+        }
         Command::ExampleConfig => println!("{}", toml::to_string_pretty(&Config::default())?),
         Command::CheckConfig => {
             let config = Config::load(&cli.config.unwrap_or_else(Config::default_path))?;

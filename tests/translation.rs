@@ -29,6 +29,7 @@ struct Server {
     endpoint: String,
     calls: Arc<AtomicUsize>,
     entered: Arc<Notify>,
+    release: Arc<Notify>,
     task: tokio::task::JoinHandle<()>,
 }
 impl Drop for Server {
@@ -44,10 +45,13 @@ impl Server {
         let count = calls.clone();
         let entered = Arc::new(Notify::new());
         let notify = entered.clone();
+        let release = Arc::new(Notify::new());
+        let release_task = release.clone();
         let task = tokio::spawn(async move {
             while let Ok((mut socket, _)) = listener.accept().await {
                 let count = count.clone();
                 let notify = notify.clone();
+                let release = release_task.clone();
                 tokio::spawn(async move {
                     let mut request = vec![];
                     let mut buf = [0u8; 8192];
@@ -78,8 +82,8 @@ impl Server {
                     let (status, kind, response) = if post {
                         let n = count.fetch_add(1, Ordering::SeqCst) + 1;
                         notify.notify_one();
-                        if mode == "slow" {
-                            tokio::time::sleep(Duration::from_millis(50)).await;
+                        if mode == "slow" && n == 1 {
+                            release.notified().await;
                         }
                         if mode == "silent" {
                             let mut byte = [0u8; 1];
@@ -155,6 +159,7 @@ impl Server {
             endpoint,
             calls,
             entered,
+            release,
             task,
         })
     }
@@ -482,11 +487,11 @@ async fn bridge_detaches_configuration_before_first_segment() -> Result<()> {
     let temp = temp()?;
     let store = Store::open(temp.path())?;
     let text = "English immutable snapshot for several segments. ".repeat(80);
-    let (lease, id) = prepare(&store, &server, &text, 1, "generic", 10)?;
+    let (lease, id) = prepare(&store, &server, &text, 1, "generic", 30)?;
     let executing = lease.clone();
     let revision = store.revision(&id)?;
     let worker_store = store.clone();
-    let worker = tokio::spawn(async move {
+    let mut worker = tokio::spawn(async move {
         HymtTranslator {
             store: worker_store,
         }
@@ -499,7 +504,11 @@ async fn bridge_detaches_configuration_before_first_segment() -> Result<()> {
         )
         .await
     });
-    tokio::time::timeout(Duration::from_secs(5), server.entered.notified()).await?;
+    tokio::select! {
+        _ = server.entered.notified() => (),
+        result = &mut worker => anyhow::bail!("bridge exited before first POST: {:?}", result),
+        _ = tokio::time::sleep(Duration::from_secs(25)) => anyhow::bail!("bridge did not reach the first POST within its fixture startup budget"),
+    }
     let mut replaced = 0;
     for entry in fs::read_dir(store.root().join("work"))? {
         let path = entry?.path().join("job.toml");
@@ -509,6 +518,7 @@ async fn bridge_detaches_configuration_before_first_segment() -> Result<()> {
         }
     }
     assert_eq!(replaced, 1);
+    server.release.notify_one();
     let hash = worker.await??;
     let result = manifest(&store, &hash)?;
     assert!(result.report.segments > 1);

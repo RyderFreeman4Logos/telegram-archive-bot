@@ -210,6 +210,7 @@ pub struct Tools {
     pub pdftotext: PathBuf,
     pub git: PathBuf,
     pub hymt_bridge: PathBuf,
+    pub bubblewrap: PathBuf,
 }
 impl Default for Tools {
     fn default() -> Self {
@@ -222,6 +223,7 @@ impl Default for Tools {
             pdftotext: "/usr/bin/pdftotext".into(),
             git: "/usr/bin/git".into(),
             hymt_bridge: "/usr/local/bin/archive-hymt-bridge".into(),
+            bubblewrap: "/usr/bin/bwrap".into(),
         }
     }
 }
@@ -453,6 +455,7 @@ impl Config {
             &self.tools.pdftotext,
             &self.tools.git,
             &self.tools.hymt_bridge,
+            &self.tools.bubblewrap,
         ] {
             ensure!(path.is_absolute(), "tool paths must be absolute");
         }
