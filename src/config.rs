@@ -174,6 +174,7 @@ impl Default for Translation {
 #[serde(default, deny_unknown_fields)]
 pub struct Synthesis {
     pub enabled: bool,
+    pub deployment_revision: String,
     pub local: bool,
     pub local_model: String,
     pub voice: String,
@@ -190,6 +191,7 @@ impl Default for Synthesis {
     fn default() -> Self {
         Self {
             enabled: false,
+            deployment_revision: String::new(),
             local: false,
             local_model: "melo".into(),
             voice: "zh-CN-YunyangNeural".into(),

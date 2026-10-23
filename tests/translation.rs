@@ -741,6 +741,7 @@ shutil.copyfile(Path(__file__).with_suffix('.mp3'),a[a.index('--output')+1])
     config.translation.profile = "generic".into();
     config.tools.hymt_bridge = bridge();
     config.synthesis.enabled = true;
+    config.synthesis.deployment_revision = "synthetic-product-tts-v1".into();
     config.tools.md2audio = producer.clone();
     config.archive.directory = Some(root.path().join("archive"));
     config.limits.llm_seconds = 60;

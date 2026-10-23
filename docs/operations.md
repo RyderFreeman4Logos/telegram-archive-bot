@@ -127,6 +127,12 @@ reload. Concurrency is conservative: one worker per phase plus a dedicated contr
 worker, with shared bounds for downloads, model requests, synthesis and FFmpeg.
 Delivery uses one worker, never exceeding the configured delivery maximum.
 
+For cross-job narration reuse, pin md2audio and its backend/local weights and set
+`synthesis.deployment_revision`. Update it when that deployment changes; a Python
+entry-point hash alone cannot detect package changes. Without this declaration,
+completed audio remains reusable for recovery/delivery within its original job,
+while new jobs synthesize independently. Do not update dependencies during a job.
+
 Before upgrade, stop the service explicitly, create/verify a full backup, save the
 old executable hashes, configuration and release version, then install the new
 pinned candidate. Run doctor and isolated replay before an explicit restart.

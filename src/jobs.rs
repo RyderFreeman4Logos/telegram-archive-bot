@@ -554,6 +554,10 @@ mod tests {
             .unwrap()
             .remove("backend");
         old["tools"].as_object_mut().unwrap().remove("bubblewrap");
+        old["synthesis"]
+            .as_object_mut()
+            .unwrap()
+            .remove("deployment_revision");
         let old = serde_json::to_string(&old)?;
         let id = digest(format!("{old}\n{tools}"));
         conn.execute(
@@ -563,7 +567,11 @@ mod tests {
         conn.execute("UPDATE jobs SET config_id=?1", [id])?;
         let mut lease = store.claim_at(1000)?.unwrap();
         assert_eq!(lease.config.translation.backend, "openai_compatible");
+        assert!(lease.config.synthesis.deployment_revision.is_empty());
         store.heartbeat_at(&lease, 1001)?;
+        lease.config.synthesis.deployment_revision = "mutated".into();
+        assert!(store.heartbeat_at(&lease, 1002).is_err());
+        lease.config.synthesis.deployment_revision.clear();
         lease.config.translation.backend = "llama_cpp".into();
         assert!(store.heartbeat_at(&lease, 1002).is_err());
         Ok(())
