@@ -147,5 +147,13 @@
     "production_poller_started": false,
     "legacy_bot_modified": false,
     "archive_remote_push_tested": "local bare-remote fixtures only"
+  },
+  "binary_build": {
+    "profile": "release",
+    "cpu": "Intel Core i9-12900H (Alder Lake)",
+    "rust_target_cpu": "native (inherited operator Cargo configuration)",
+    "os": "Debian 12",
+    "glibc": "2.36",
+    "portability": "The prebuilt pair is host-tuned, not a generic x86_64 CPU baseline. Build from source on other CPUs."
   }
 }

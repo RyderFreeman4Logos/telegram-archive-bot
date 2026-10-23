@@ -24,12 +24,19 @@ required before delivery. Actual test-chat receipts confirmed a 104-second voice
 1182-second track and 1474-second track. These do not establish client controls
 or human-audited semantic/audible quality.
 
+Cross-job narration reuse requires an explicit `synthesis.deployment_revision`
+covering the Python package and TTS deployment. With no revision, recovery and
+delivery can reuse audio within the original job; new jobs synthesize again.
+
 ## Installation, requirements and limits
 
 Follow [installation and operation](operations.md). Source builds use Rust 1.99.1,
 ADK-Rust 2.3.0 and hymt `de670b21b26b3a88a8d711845c9e3d3b9af4c0ba`.
-The Linux x86_64 binary pair is built/tested on Debian 12; other host architectures
-are not release-tested. External yt-dlp, md2audio, FFmpeg/ffprobe, Poppler, Git and
+The prebuilt pair is tested on Debian 12/glibc 2.36 and Intel i9-12900H
+(Alder Lake). It inherits the build host's `target-cpu=native`; it is **not a
+generic x86_64 CPU build**. Use the documented Cargo source installation on
+other CPUs. Other architectures are not release-tested.
+External yt-dlp, md2audio, FFmpeg/ffprobe, Poppler, Git and
 Bubblewrap are installed separately. Their exact tested versions and executable
 hashes are recorded in the capability manifest. The archive contains both Rust
 binaries, application licenses, third-party notices, dependency inventory and

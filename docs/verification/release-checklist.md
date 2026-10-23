@@ -7,10 +7,15 @@ This is the active acceptance ledger, not a production-validation claim.
 
 - [x] Diagnose the hosted ADK timeout: debug-bridge hashing exhausted the fixture
   budget before any model POST. Release-bridge tests pass; failed receipts remain.
-- [ ] Merge PRs #39/#40 only after their complete hosted gates pass.
+- [x] Merge PRs #39/#40 after complete hosted gates
+  [40017817089](https://github.com/RyderFreeman4Logos/telegram-archive-bot/actions/runs/40017817089)
+  and [40018465385](https://github.com/RyderFreeman4Logos/telegram-archive-bot/actions/runs/40018465385) passed.
 - [x] Audit every F01–F20 criterion and production caller in
   [feature acceptance](feature-acceptance.md); retain F15 A6 in #41.
-- [ ] Close satisfied issues after the corresponding implementation reaches main.
+- [x] Close 16 satisfied core issues after runtime integration reached main;
+  F01/F12/F20 remain until final release/provenance/custody checks finish.
+- [x] Reproduce and fix unpinned TTS cache identity (#43); retain the failing
+  real-audio regression and verify both same-job recovery and pinned sharing.
 - [x] Complete product scenarios and the [G01–G12 evidence matrix](f20.md).
 - [x] Verify both explicitly opt-in acceptance examples, including refusal checks.
 - [x] Inspect actual model/hymt/TTS/audio/Git output and record artifact evidence.
@@ -28,6 +33,10 @@ This is the active acceptance ledger, not a production-validation claim.
 - [ ] Publish the documented prerelease with binaries/checksums/license evidence,
   reconcile issue states, and verify the published assets and clean checkout.
 
+This source checklist records the candidate before its final gate and publication.
+The [release](https://github.com/RyderFreeman4Logos/telegram-archive-bot/releases/tag/v0.1.0-rc.1)
+will carry the final source-bound gate, installation and publication receipts.
+
 ## Scope and operating constraints
 
 F21/F22 are optional backlog, not required for this candidate. Drafts remain
@@ -42,7 +51,7 @@ compaction. Completion requires evidence, not a lower open-issue count.
 ## Evidence available before final acceptance
 
 - Notion reading manifest: all 33 specification pages, with stable F01–F22 IDs.
-- F01–F17 implementation PRs merged; F18/F19 candidates remain under validation.
+- F01–F19 implementation PRs merged after their hosted gates passed.
 - F19 local gate: 128 host tests and one bridge test passed (historical candidate).
 - A clean public clone at `a844f7a` installed both Cargo binaries and passed the
   offline replay, backup/restore, immutable-state and service-file checks.
@@ -53,6 +62,17 @@ compaction. Completion requires evidence, not a lower open-issue count.
 
 Each historical receipt keeps its source revision; it does not transfer to the
 final candidate after changes. Failed hosted runs remain failed evidence.
+
+At `852a24b`, both format and all-target Clippy checks, **136 host tests and
+one bridge test**, and both release builds exited 0 in the complete local gate.
+The host release build took 4 minutes 41 seconds. The source audit then added an
+explicit host-PID observation/reap assertion for a namespaced media descendant;
+the TTS identity fix and final test changes require fresh complete gates.
+
+All 33 original Notion exports were rehashed and their public rendering compared
+exactly: only titles, date markup and local-link rendering differ. The reading
+manifest now labels the original export hash separately from the public file hash;
+no specification or draft content was changed.
 
 Client playback and official-X access remain externally blocked, with exact
 prerequisites recorded in `capabilities.json` and #41. A candidate can be
