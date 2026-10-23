@@ -1,0 +1,24 @@
+[workspace]
+
+[package]
+name = "archive-hymt-bridge"
+version = "0.1.0-rc.1"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+hymt-core = { git = "https://github.com/RyderFreeman4Logos/hymt", rev = "de670b21b26b3a88a8d711845c9e3d3b9af4c0ba" }
+hymt-client = { git = "https://github.com/RyderFreeman4Logos/hymt", rev = "de670b21b26b3a88a8d711845c9e3d3b9af4c0ba" }
+hymt-segment = { git = "https://github.com/RyderFreeman4Logos/hymt", rev = "de670b21b26b3a88a8d711845c9e3d3b9af4c0ba" }
+hymt-cache = { git = "https://github.com/RyderFreeman4Logos/hymt", rev = "de670b21b26b3a88a8d711845c9e3d3b9af4c0ba" }
+hymt-translate = { git = "https://github.com/RyderFreeman4Logos/hymt", rev = "de670b21b26b3a88a8d711845c9e3d3b9af4c0ba" }
+
+[profile.release]
+strip = true

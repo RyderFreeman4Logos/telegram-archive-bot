@@ -43,3 +43,47 @@ fixtures now use private temporary roots under the repository's ignored target
 directory. Production directory-loss errors remain failures. The final full
 suite passed, and 30 additional complete process suites passed with the isolated
 fixture roots.
+
+F10 PR [#31](https://github.com/RyderFreeman4Logos/telegram-archive-bot/pull/31)
+merged after [39987115986](https://github.com/RyderFreeman4Logos/telegram-archive-bot/actions/runs/39987115986)
+passed. The original push check first timed out during apt package installation;
+its rerun was superseded/cancelled by the successful PR check, before any claim of
+code-check success from that failed attempt.
+
+| F11 | Build pinned Rust bridge; host `cargo test --locked`; bridge `cargo test --locked --manifest-path integrations/hymt-bridge/Cargo.toml`; formatting and all-target Clippy for both workspaces | Final rerun: 58 host checks and 1 bridge check passed; both all-target Clippy checks passed. Six integrated tests run the actual bridge against local HTTP: mixed Markdown/code/Unicode and multiple segments, verified cache reuse, changed profile invalidation, unverified bypass, detached configuration after file mutation, empty translated payload despite protected URL, retained-original truncation, failing later segment, silent cancellation/timeout, omitted sampler fields and ADK phase transition. A unit check rejects tampered byte hashes and invalid Unicode ranges; bridge error classification is tested without exposing provider bodies. | No live hymt/model quality or Telegram playback acceptance is claimed. Semantic fidelity is explicitly unverified; private upstream cache is disposable and currently has no disk quota. Full runtime admission and cache maintenance remain F18/F19. |
+
+The F11 fixture initially assumed every hymt request was streaming; the pinned
+implementation uses non-streaming calls for some later segments. The fixture was
+corrected to serve both documented client paths. An empty completion with a
+protected URL revealed a real adapter validation gap; the bridge now rejects a
+result equal to reconstructing all translated segments as empty. Tests preserve
+that case. No semantic-completeness guarantee was added.
+
+The initial F11 commit recorded the 58-check run before its output was inspected;
+that run failed the newly added 503 classification assertion. This was a receipt
+error, not a successful run. The pinned upstream wraps segment failures in an
+additional anyhow context. Classification must inspect the cause chain, not only
+the outer message; the regression covers both forms. The final rerun below is the
+authoritative receipt.
+
+Final F11 rerun after the classification fix: bridge build, bridge test (1), host
+Clippy, and the entire host suite (58) all exited successfully. The normal ADK
+multi-node fixtures now use a five-second attempt budget; their previous shared
+one-second budget also caused two timeout failures under concurrent SQLite
+checkpoint load. The dedicated silent/slow-stream fixture still explicitly uses
+one second and still asserts Timeout, while cancellation retains its 30 ms
+trigger. Production timeout defaults and implementation are unchanged.
+
+A subsequent compatibility check added one recovery regression: old serialized
+configuration snapshots missing a newly defaulted field keep their original
+content hash and can resume, while mutation of the normalized claimed snapshot
+is rejected. The fence now hashes the original database strings and compares
+normalized configuration values separately. After this change, formatting,
+all-target host Clippy and all **59 host tests** passed. The bridge was unchanged
+from its passing 1-test receipt.
+
+The latest F11 PR run [39989656309](https://github.com/RyderFreeman4Logos/telegram-archive-bot/actions/runs/39989656309)
+again failed before code checks: the Azure Ubuntu mirror did not finish package
+downloads within 180 seconds. CI now selects the official HTTPS Ubuntu archive
+for that mirror and omits optional recommended packages. Timeouts and required
+code checks remain in place; no result from this failed run counts as validation.
