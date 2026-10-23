@@ -320,7 +320,15 @@ impl Store {
         };
         let tools = Self::audio_tools(lease)?;
         let producer = executable(&lease.config.tools.md2audio)?;
-        let identity = serde_json::json!({"transform":"validated-narration-v1","text_policy":"verbatim-markdown-v1-labels-are-metadata","validation":"audio-finalizer-v1","request":request,"view":context,"synthesis":lease.config.synthesis,"config":lease.job.config_id,"sampling":"md2audio-explicit-settings","producer":producer,"tools":tools,"snapshot_tools":lease.tools});
+        // A Python launcher hash cannot attest its package, local weights or remote TTS deployment.
+        let unverified_job = lease
+            .config
+            .synthesis
+            .deployment_revision
+            .trim()
+            .is_empty()
+            .then_some(&lease.job.id);
+        let identity = serde_json::json!({"transform":"validated-narration-v1","text_policy":"verbatim-markdown-v1-labels-are-metadata","validation":"audio-finalizer-v1","request":request,"view":context,"synthesis":lease.config.synthesis,"unverified_job":unverified_job,"config":lease.job.config_id,"sampling":"md2audio-explicit-settings","producer":producer,"tools":tools,"snapshot_tools":lease.tools});
         self.coalesce(lease,Transform{identity,reuse:Reuse::Validated,seconds:lease.config.limits.synthesis_seconds+lease.config.limits.media_seconds},cancel,|set:&AudioSet|{
             self.audio_set_valid(lease,set,request.profile,&tools)?;
             ensure!(set.candidates.len()==1,Failure::InvalidOutput);

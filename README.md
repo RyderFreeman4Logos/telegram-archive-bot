@@ -6,10 +6,15 @@ A new Rust service for durable Telegram source archives and validated audio.
 SQLite and immutable content-addressed files are authoritative; a separately
 configured Git repository receives a deterministic semantic projection.
 
-**Status: implementation in progress. This is not a deployed or validated bot.**
+**Status: 0.1.0-rc.1 candidate; client playback validation is pending.**
 Core requirements are [F01–F20](docs/implementation/issue-map.json). Search (F21)
 and legacy import (F22) are optional. This repository has fresh history and
 contains no prior bot implementation or archive data.
+
+Read the [release notes](docs/release-notes-0.1.0-rc.1.md) and
+[actual acceptance evidence](docs/verification/f20.md) before activation.
+Real model/translation/TTS, downloads and three Telegram audio receipts passed;
+Desktop/Android seeking and speed controls remain blocked by client access.
 
 ## Build and offline checks
 

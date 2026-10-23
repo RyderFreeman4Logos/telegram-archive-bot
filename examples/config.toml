@@ -27,6 +27,9 @@ enabled = false
 
 [synthesis]
 enabled = false
+# Pin the md2audio package, backend defaults and local weights for cross-job reuse.
+# Empty permits recovery reuse only within the original job.
+deployment_revision = ""
 local = false
 voice = "zh-CN-YunyangNeural"
 language = "zh"

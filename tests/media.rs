@@ -51,7 +51,7 @@ if '--dump-single-json' in a:
 assert '--no-simulate' in a and '--no-playlist' in a
 assert a[a.index('--print')+1]=='after_move:%(filepath)j'
 if mode == 'silent':
-    descendant=subprocess.Popen(['/usr/bin/python3','-c','import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(60)'])
+    descendant=subprocess.Popen(['/usr/bin/python3','-c','import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(60)','--archive-media-descendant',__file__])
     Path('download-started').write_text(str(descendant.pid))
     time.sleep(60)
 name='candidate changed "λ".ogg'
@@ -272,23 +272,34 @@ async fn cancellation_and_deadline_cover_wrapped_tool_and_no_ready_output() -> R
         let token = CancellationToken::new();
         let child = token.clone();
         let work = store.root().join("work");
+        let script = lease.config.tools.yt_dlp.clone();
         let trigger = tokio::spawn(async move {
             if cancel_run {
-                tokio::time::timeout(Duration::from_secs(5), async {
+                return tokio::time::timeout(Duration::from_secs(5), async {
                     loop {
                         let started = fs::read_dir(&work)?
                             .filter_map(|e| e.ok())
                             .any(|e| e.path().join("download-started").is_file());
                         if started {
+                            let owned = fs::read_dir("/proc")?
+                                .filter_map(|entry| entry.ok())
+                                .find_map(|entry| {
+                                    let bytes = fs::read(entry.path().join("cmdline")).ok()?;
+                                    let args = bytes.split(|byte| *byte == 0).collect::<Vec<_>>();
+                                    (args.contains(&b"--archive-media-descendant".as_slice())
+                                        && args.contains(&script.as_os_str().as_encoded_bytes()))
+                                        .then_some(entry.path())
+                                });
+                            let pid = owned.expect("observe the live namespaced descendant on the host before cancellation");
                             child.cancel();
-                            return Ok::<_, std::io::Error>(());
+                            return Ok::<_, anyhow::Error>(Some(pid));
                         }
                         tokio::time::sleep(Duration::from_millis(10)).await;
                     }
                 })
-                .await??;
+                .await?;
             }
-            Ok::<_, anyhow::Error>(())
+            Ok::<_, anyhow::Error>(None)
         });
         let error = downloader
             .download(
@@ -300,7 +311,12 @@ async fn cancellation_and_deadline_cover_wrapped_tool_and_no_ready_output() -> R
             )
             .await
             .unwrap_err();
-        trigger.await??;
+        if let Some(pid) = trigger.await?? {
+            assert!(
+                !pid.exists(),
+                "namespaced descendant must be dead and reaped"
+            );
+        }
         assert_eq!(
             error.downcast_ref::<Failure>(),
             Some(if cancel_run {

@@ -16,6 +16,13 @@ limits participate in identity. Raw producer output is never a ready cache entry
 all audio must pass finalization, retained-byte verification and candidate/parent
 binding before selection or reuse. Corrupt selected bytes fail visibly.
 
+A Python launcher hash does not identify its installed package or TTS deployment.
+`synthesis.deployment_revision` identifies the operator-pinned package,
+provider/defaults and local weights. Empty revisions scope narration reuse to
+the owning job; declared unchanged deployments allow cross-job coalescing.
+Changing that revision invalidates the selected spoken plan and audio. This is
+an explicit deployment contract, not remote weight attestation.
+
 Concurrent owners wait without holding a SQLite writer. Lease loss, cancellation
 and deadline prevent selection and drain the producer. External providers can
 still have accepted work before a lost lease; this is not an exactly-once remote

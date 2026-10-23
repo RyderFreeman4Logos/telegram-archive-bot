@@ -2,199 +2,232 @@
   {
     "title": "Rust Telegram Archive Bot \u2014 Greenfield Build Specification",
     "spec_id": null,
-    "sha256": "30363d4a78062bfeff4beee9917abef2d87ada308897c83e9060873332717e38",
-    "file": "docs/spec/root.md"
+    "sha256": "2c3041b81315a392fdd9f23b7765cb09dbaa96a5bcda189b7da72eb249f132da",
+    "file": "docs/spec/root.md",
+    "source_export_sha256": "30363d4a78062bfeff4beee9917abef2d87ada308897c83e9060873332717e38"
   },
   {
     "title": "00 \u2014 Agent Handoff & Repository Bootstrap",
     "spec_id": null,
-    "sha256": "61cd0bc7ad89ae29400ad7cf47740339243366d2ebf1fd1167f140f07f16fde8",
-    "file": "docs/spec/00.md"
+    "sha256": "640c33dbdb8b4e0dcb3213091062e5f3b93c589cd9c803fafade165d7afee6ff",
+    "file": "docs/spec/00.md",
+    "source_export_sha256": "61cd0bc7ad89ae29400ad7cf47740339243366d2ebf1fd1167f140f07f16fde8"
   },
   {
     "title": "01 \u2014 Product Scope & Acceptance Contract",
     "spec_id": null,
-    "sha256": "3ade203e89289e454b68527f3affe8838b82b922b5afacc56ea266c2b94768db",
-    "file": "docs/spec/01.md"
+    "sha256": "cb9726c7098e8d4df9039412f93b17ab2a1cf61ec6cb26ea9ca05a6942021669",
+    "file": "docs/spec/01.md",
+    "source_export_sha256": "3ade203e89289e454b68527f3affe8838b82b922b5afacc56ea266c2b94768db"
   },
   {
     "title": "02 \u2014 Architecture & Runtime Contracts",
     "spec_id": null,
-    "sha256": "6542e9a2f3b0849b73a726799dd9a63c8b820b6817e4a589cd1846f444240beb",
-    "file": "docs/spec/02.md"
+    "sha256": "597e5457b7128d59ecec9fb402ef389eb26849f57b30bdedc7e0dd836e4fa21b",
+    "file": "docs/spec/02.md",
+    "source_export_sha256": "6542e9a2f3b0849b73a726799dd9a63c8b820b6817e4a589cd1846f444240beb"
   },
   {
     "title": "03 \u2014 Canonical Storage & Git Projection",
     "spec_id": null,
-    "sha256": "aef82d2e708b2d2808d4e5bc5277dacc25f77c7951b5ac083975334470d431a3",
-    "file": "docs/spec/03.md"
+    "sha256": "b38c6f58df0f685724175d67f38eaaf527e4d9b342f2628864d33fc9c7c9a7df",
+    "file": "docs/spec/03.md",
+    "source_export_sha256": "aef82d2e708b2d2808d4e5bc5277dacc25f77c7951b5ac083975334470d431a3"
   },
   {
     "title": "04 \u2014 ADK, hymt & Media Integrations",
     "spec_id": null,
-    "sha256": "16f62ac38ccf26338dbb7905f2f92e344f4f37ae15d37c1fe9effce3ef339e4f",
-    "file": "docs/spec/04.md"
+    "sha256": "96c6ac62473418b7735ba812675cb685045e669c2f6f119ce4024b94f100b71d",
+    "file": "docs/spec/04.md",
+    "source_export_sha256": "16f62ac38ccf26338dbb7905f2f92e344f4f37ae15d37c1fe9effce3ef339e4f"
   },
   {
     "title": "05 \u2014 Audio Finalization & Telegram Delivery",
     "spec_id": null,
-    "sha256": "5247fc08fea0abcc0243dd90105abd1a5ff939a553cf3eca20cbd7e7cfe572d1",
-    "file": "docs/spec/05.md"
+    "sha256": "d561c392d99e2f476fa82ae7642605c0b5c8c84789741d8444b9ce97b076bed3",
+    "file": "docs/spec/05.md",
+    "source_export_sha256": "5247fc08fea0abcc0243dd90105abd1a5ff939a553cf3eca20cbd7e7cfe572d1"
   },
   {
     "title": "06 \u2014 Configuration, Operations & Recovery",
     "spec_id": null,
-    "sha256": "919f3adf5be070eb6689aff0258451d72bbbf6e070f0ab9e099fa22bdb52d2ca",
-    "file": "docs/spec/06.md"
+    "sha256": "74939acef5be767dd2df524c023e1a85034f29517ef0ecf6654aa97b633ccf4d",
+    "file": "docs/spec/06.md",
+    "source_export_sha256": "919f3adf5be070eb6689aff0258451d72bbbf6e070f0ab9e099fa22bdb52d2ca"
   },
   {
     "title": "07 \u2014 Verification & Release Gates",
     "spec_id": null,
-    "sha256": "cc7471f47b812d45fb4c95b1eebccfce0756effbba0cfc1977cd946389282989",
-    "file": "docs/spec/07.md"
+    "sha256": "31c747f8dbe442248d8043aa8ff4751e5c71d6288a879ee9f89fd9b429e6ec9d",
+    "file": "docs/spec/07.md",
+    "source_export_sha256": "cc7471f47b812d45fb4c95b1eebccfce0756effbba0cfc1977cd946389282989"
   },
   {
     "title": "08 \u2014 Evidence & Decision Log",
     "spec_id": null,
-    "sha256": "dd107b63fbd7dffee9973873cd8489cd278ef6069ad365ffc34b47fb586acf14",
-    "file": "docs/spec/08.md"
+    "sha256": "b6743216d4e0c047eea745ede1e695925bb60e99051ebbcdd0e3227b49f22366",
+    "file": "docs/spec/08.md",
+    "source_export_sha256": "dd107b63fbd7dffee9973873cd8489cd278ef6069ad365ffc34b47fb586acf14"
   },
   {
     "title": "09 \u2014 Feature Backlog (22 Issue Definitions)",
     "spec_id": null,
-    "sha256": "2a2982a2f2d549fdc1ea4ff01f9120427ed05da758fac421023f7b8e093ea4cb",
-    "file": "docs/spec/09.md"
+    "sha256": "a924362c1a7c48cedc2bcd77fc24a20a32de47cdb4d30fccb7a8a0448a3c3f82",
+    "file": "docs/spec/09.md",
+    "source_export_sha256": "2a2982a2f2d549fdc1ea4ff01f9120427ed05da758fac421023f7b8e093ea4cb"
   },
   {
     "title": "F01 \u2014 Create the public Rust workspace and contribution baseline",
     "spec_id": "F01",
-    "sha256": "967c0dbbfc04fd75a921eb700a12cbb601809ef23dce2b2b50af54d5e565c63a",
-    "file": "docs/spec/F01.md"
+    "sha256": "785f8506e1a1ba186bb3694d32de7e455fca8dc12e1f55b844dd7d3f3ffe3ce3",
+    "file": "docs/spec/F01.md",
+    "source_export_sha256": "967c0dbbfc04fd75a921eb700a12cbb601809ef23dce2b2b50af54d5e565c63a"
   },
   {
     "title": "F02 \u2014 Add typed configuration, secret loading, and job snapshots",
     "spec_id": "F02",
-    "sha256": "bc2bf2d1376de37faf488f03d0fd2526f72e50fbd87bb8e53e3dad7d4a9d8cd4",
-    "file": "docs/spec/F02.md"
+    "sha256": "4dd21d2b65882db532095345eb5e2aab659f0b35294d64231dfb11ef11772ed0",
+    "file": "docs/spec/F02.md",
+    "source_export_sha256": "bc2bf2d1376de37faf488f03d0fd2526f72e50fbd87bb8e53e3dad7d4a9d8cd4"
   },
   {
     "title": "F03 \u2014 Implement canonical SQLite storage and immutable blob publication",
     "spec_id": "F03",
-    "sha256": "a20a1d035a70078eac8de6e5c7e6e084610643e990b6c4cc470d83ea650e38c0",
-    "file": "docs/spec/F03.md"
+    "sha256": "63b77a60d8b424b412b5569b405d997d8063d85ee4f35943b390058325cfeec8",
+    "file": "docs/spec/F03.md",
+    "source_export_sha256": "a20a1d035a70078eac8de6e5c7e6e084610643e990b6c4cc470d83ea650e38c0"
   },
   {
     "title": "F04 \u2014 Model provider identities, content revisions, relationships, and views",
     "spec_id": "F04",
-    "sha256": "fcc94895bc4b287977576c43a7b482650c0b79038376d4945d3e7dea90313afd",
-    "file": "docs/spec/F04.md"
+    "sha256": "9819390f926ad1474b615d9782a6b23fa812f82f7d274dda64aeeae600b9508b",
+    "file": "docs/spec/F04.md",
+    "source_export_sha256": "fcc94895bc4b287977576c43a7b482650c0b79038376d4945d3e7dea90313afd"
   },
   {
     "title": "F05 \u2014 Persist Telegram ingress before acknowledging updates",
     "spec_id": "F05",
-    "sha256": "0cadba8bc123192b46506d6fec46aafd3bfa9012a9f6e2eb787f6d1f6fc27b1a",
-    "file": "docs/spec/F05.md"
+    "sha256": "afe9e9120a484755c0a09f72a1d90c7f45ebaa4b9c64708aef94978eecc1e53c",
+    "file": "docs/spec/F05.md",
+    "source_export_sha256": "0cadba8bc123192b46506d6fec46aafd3bfa9012a9f6e2eb787f6d1f6fc27b1a"
   },
   {
     "title": "F06 \u2014 Build durable jobs with leases, bounded retries, and cancellation",
     "spec_id": "F06",
-    "sha256": "eab40112b03ef43112b029c94aa486d39edfeb977baa132bb229e6a0cc005d6b",
-    "file": "docs/spec/F06.md"
+    "sha256": "f1dbec5212bde14934b69edc1cd690b7a4665e369ff32ca013e39d92abe0888e",
+    "file": "docs/spec/F06.md",
+    "source_export_sha256": "eab40112b03ef43112b029c94aa486d39edfeb977baa132bb229e6a0cc005d6b"
   },
   {
     "title": "F07 \u2014 Supervise external tools with isolated workspaces and resource limits",
     "spec_id": "F07",
-    "sha256": "9949bc404ed8cdcbe629fd3d0fead0a34915af29c8bf78f0fee69531ec1d2a21",
-    "file": "docs/spec/F07.md"
+    "sha256": "7a71ffc5a26296fe6e459629850fa616292b9ee947d49d1d4507033d885beb64",
+    "file": "docs/spec/F07.md",
+    "source_export_sha256": "9949bc404ed8cdcbe629fd3d0fead0a34915af29c8bf78f0fee69531ec1d2a21"
   },
   {
     "title": "F08 \u2014 Archive X posts, reply chains, quotes, reposts, and articles",
     "spec_id": "F08",
-    "sha256": "1d04d5a183e5e79a9ffde830235e59b47789aa6907ba56ab0b1a8ca6574a2164",
-    "file": "docs/spec/F08.md"
+    "sha256": "6c90d9618b6a4023e987cd8be7dae01459fe4480ff606289e6be0a5e7aa92e85",
+    "file": "docs/spec/F08.md",
+    "source_export_sha256": "1d04d5a183e5e79a9ffde830235e59b47789aa6907ba56ab0b1a8ca6574a2164"
   },
   {
     "title": "F09 \u2014 Extract web articles, ThreadReader, PDFs, and text documents",
     "spec_id": "F09",
-    "sha256": "c79dfdf388a385e221264cfd2dd32a0aa8e8b3671c631c5fcbd623620249bcfa",
-    "file": "docs/spec/F09.md"
+    "sha256": "621444c74b97e63a6e97fdcf0fdb6fe89603dc255537c5067e2d3b3fd982e6b1",
+    "file": "docs/spec/F09.md",
+    "source_export_sha256": "c79dfdf388a385e221264cfd2dd32a0aa8e8b3671c631c5fcbd623620249bcfa"
   },
   {
     "title": "F10 \u2014 Implement typed ADK workflows with recoverable execution",
     "spec_id": "F10",
-    "sha256": "82038fb9369e774ddf64abe24ce129ddde3c64ca8413fa2cd74d3bcfa8578b51",
-    "file": "docs/spec/F10.md"
+    "sha256": "1c547e076ed41f24539fe00b7c18cb8e18e692c772a0bc2dffd30c5bb275b9b6",
+    "file": "docs/spec/F10.md",
+    "source_export_sha256": "82038fb9369e774ddf64abe24ce129ddde3c64ca8413fa2cd74d3bcfa8578b51"
   },
   {
     "title": "F11 \u2014 Integrate hymt through a revision-pinned Rust adapter",
     "spec_id": "F11",
-    "sha256": "8b11cd0c1c2de705f8a8dc4454861d8705ad95ef9eef67a4a49286d3f409bc28",
-    "file": "docs/spec/F11.md"
+    "sha256": "a5cb52f24778367aa90f26d2df500943b05797fff7801146259a8a452f46eb34",
+    "file": "docs/spec/F11.md",
+    "source_export_sha256": "8b11cd0c1c2de705f8a8dc4454861d8705ad95ef9eef67a4a49286d3f409bc28"
   },
   {
     "title": "F12 \u2014 Implement a supervised yt-dlp adapter with structured results",
     "spec_id": "F12",
-    "sha256": "c788c4abbb3f2b4e70c1b31094e21481207eb50ddfb803842918bf0b83344d95",
-    "file": "docs/spec/F12.md"
+    "sha256": "e54bed051a3e2da6790f476a213bd1232c8799eae2ad96a2747eef1ed92d2888",
+    "file": "docs/spec/F12.md",
+    "source_export_sha256": "c788c4abbb3f2b4e70c1b31094e21481207eb50ddfb803842918bf0b83344d95"
   },
   {
     "title": "F13 \u2014 Integrate md2audio as a resumable speech producer",
     "spec_id": "F13",
-    "sha256": "ccc8917d20519695233b3f436f351fb5372ce7d91445780583b31bdc739bc115",
-    "file": "docs/spec/F13.md"
+    "sha256": "2fb90a186146435162e4f6772d6f8607a3078b4f928b59c16d724f68463277cd",
+    "file": "docs/spec/F13.md",
+    "source_export_sha256": "ccc8917d20519695233b3f436f351fb5372ce7d91445780583b31bdc739bc115"
   },
   {
     "title": "F14 \u2014 Validate and finalize every audio artifact",
     "spec_id": "F14",
-    "sha256": "06e98b3019f1f1158c080dc027fa320fd5202c01718f8656969beefa7629fdac",
-    "file": "docs/spec/F14.md"
+    "sha256": "c9823d7e081902fbc07f4b513729f5f24e4a72a8a2c7a68aafc1e1a3ebfc37a3",
+    "file": "docs/spec/F14.md",
+    "source_export_sha256": "06e98b3019f1f1158c080dc027fa320fd5202c01718f8656969beefa7629fdac"
   },
   {
     "title": "F15 \u2014 Deliver audio through a durable Telegram outbox",
     "spec_id": "F15",
-    "sha256": "2139524206f1fd3f6216dcbbc40290152b474f5f8ff1834e0e2d0a8bb7f11196",
-    "file": "docs/spec/F15.md"
+    "sha256": "83e731215a38ab939f095ac44d77b1400758c3b072329f3adf48cbb49fbc95d5",
+    "file": "docs/spec/F15.md",
+    "source_export_sha256": "2139524206f1fd3f6216dcbbc40290152b474f5f8ff1834e0e2d0a8bb7f11196"
   },
   {
     "title": "F16 \u2014 Project canonical archives to deterministic Git commits",
     "spec_id": "F16",
-    "sha256": "aa57e108f9655fba5a1c79b77ecf17e97fadbe392b204f929bad2f994a259857",
-    "file": "docs/spec/F16.md"
+    "sha256": "29da7d4af4d0b1113cf7f673f61cc3d5f8ca23d9788cb77dbfaec90eef066104",
+    "file": "docs/spec/F16.md",
+    "source_export_sha256": "aa57e108f9655fba5a1c79b77ecf17e97fadbe392b204f929bad2f994a259857"
   },
   {
     "title": "F17 \u2014 Add verified backup, restore, and Git-only semantic rebuild",
     "spec_id": "F17",
-    "sha256": "7d50004c51411e8b64d25a6305230a70ae08708597abb4678b6a7f539457d76a",
-    "file": "docs/spec/F17.md"
+    "sha256": "0815ce6f05412a76c64104b67fad7a53000403fc4d11e8f6e612e13d7d43ca10",
+    "file": "docs/spec/F17.md",
+    "source_export_sha256": "7d50004c51411e8b64d25a6305230a70ae08708597abb4678b6a7f539457d76a"
   },
   {
     "title": "F18 \u2014 Cache derivations by complete input and configuration identity",
     "spec_id": "F18",
-    "sha256": "c28696b74a38db596d5a2798d0fed1dd7d473f962fd168e553db10bbe3f35931",
-    "file": "docs/spec/F18.md"
+    "sha256": "afbea79f1e05db09a991cda64246d23f3c95cea214e43ebd20addb56ac9c1cf6",
+    "file": "docs/spec/F18.md",
+    "source_export_sha256": "c28696b74a38db596d5a2798d0fed1dd7d473f962fd168e553db10bbe3f35931"
   },
   {
     "title": "F19 \u2014 Ship operator diagnostics, systemd deployment, and maintenance docs",
     "spec_id": "F19",
-    "sha256": "377e7e1af35d8af4d1a884c5b84baf97a4bfee999f96f59ec2a56c2841e54c98",
-    "file": "docs/spec/F19.md"
+    "sha256": "f208310ef4a31db7e870c9a303cf1f44b54ccdf3fc783fe274d9e568d1cc10e0",
+    "file": "docs/spec/F19.md",
+    "source_export_sha256": "377e7e1af35d8af4d1a884c5b84baf97a4bfee999f96f59ec2a56c2841e54c98"
   },
   {
     "title": "F20 \u2014 Verify the full product and publish a documented release candidate",
     "spec_id": "F20",
-    "sha256": "b8d5800d5e8f44c289820d669f0efa66c1e0cf15e1c42727d0e5f573bd41c373",
-    "file": "docs/spec/F20.md"
+    "sha256": "c71ad96df2f982d5a8eb7bff62723a895380f6439bd9d570bfd8ab583484050e",
+    "file": "docs/spec/F20.md",
+    "source_export_sha256": "b8d5800d5e8f44c289820d669f0efa66c1e0cf15e1c42727d0e5f573bd41c373"
   },
   {
     "title": "F21 \u2014 Add rebuildable keyword and optional LanceDB semantic search",
     "spec_id": "F21",
-    "sha256": "19d28e882760e67a6bd3cade655f51f88807ffcc0ef01300d7d4ea87f383ed1d",
-    "file": "docs/spec/F21.md"
+    "sha256": "db139e502e75dd17bd3d4c9c68e577991c4f8e9dd0f0dfd5f100be03f93643ae",
+    "file": "docs/spec/F21.md",
+    "source_export_sha256": "19d28e882760e67a6bd3cade655f51f88807ffcc0ef01300d7d4ea87f383ed1d"
   },
   {
     "title": "F22 \u2014 Import legacy local archives without modifying the source archive",
     "spec_id": "F22",
-    "sha256": "c975ff97f35df30dd1d31a44b1cc03a6271c3e41c6bd6b7011820346c5422352",
-    "file": "docs/spec/F22.md"
+    "sha256": "de4477fe04e44f4012d41e18d3c55031634c93f7b2e6faf0f6628ed3eea5636c",
+    "file": "docs/spec/F22.md",
+    "source_export_sha256": "c975ff97f35df30dd1d31a44b1cc03a6271c3e41c6bd6b7011820346c5422352"
   }
 ]

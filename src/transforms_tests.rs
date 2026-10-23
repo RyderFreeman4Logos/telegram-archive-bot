@@ -57,6 +57,7 @@ fn fixture(text: &str) -> Result<(tempfile::TempDir, Store, Config, NarrationReq
     config.telegram.allowed_chats = vec![2];
     config.telegram.allowed_users = vec![3];
     config.synthesis.enabled = true;
+    config.synthesis.deployment_revision = "synthetic-tts-v1".into();
     config.tools.md2audio = producer;
     config.limits.synthesis_seconds = 10;
     config.limits.media_seconds = 30;
@@ -106,6 +107,58 @@ fn calls(config: &Config) -> usize {
         .unwrap_or_default()
         .lines()
         .count()
+}
+
+#[tokio::test]
+async fn unpinned_tts_dependencies_do_not_reuse_an_unchanged_launcher() -> Result<()> {
+    let (_root, store, mut config, request) = fixture("Original synthetic speech")?;
+    config.synthesis.deployment_revision.clear();
+    let cancel = CancellationToken::new();
+    let first = job(&store, &config, 1, false)?;
+    let old = store.narrate(&first, &request, &cancel).await?;
+    assert_eq!(
+        old.artifacts,
+        store.narrate(&first, &request, &cancel).await?.artifacts
+    );
+    assert_eq!(
+        calls(&config),
+        1,
+        "same-job recovery retains its completed output"
+    );
+    let launcher = fs::read(&config.tools.md2audio)?;
+    assert!(
+        Command::new("/usr/bin/ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-nostdin",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=880:duration=3",
+                "-c:a",
+                "libmp3lame",
+                "-b:a",
+                "96k"
+            ])
+            .arg(config.tools.md2audio.with_extension("mp3"))
+            .status()?
+            .success()
+    );
+    assert_eq!(launcher, fs::read(&config.tools.md2audio)?);
+    let second = job(&store, &config, 2, false)?;
+    let new = store.narrate(&second, &request, &cancel).await?;
+    assert_eq!(
+        calls(&config),
+        2,
+        "an unpinned Python package/backend can change behind the same launcher"
+    );
+    assert_ne!(
+        store.artifact(&old.artifacts[0])?.blob_digest,
+        store.artifact(&new.artifacts[0])?.blob_digest
+    );
+    Ok(())
 }
 #[tokio::test]
 async fn source_local_audio_coalesces_with_independent_deliveries_and_upload_retry() -> Result<()> {
@@ -238,7 +291,7 @@ async fn voice_language_speaker_profile_tool_and_force_changes_preserve_prior_au
     let cancel = CancellationToken::new();
     let original = store.narrate(&first, &request, &cancel).await?;
     assert_eq!(calls(&config), 1);
-    for (i, change) in ["voice", "language", "speaker", "profile"]
+    for (i, change) in ["voice", "language", "speaker", "profile", "deployment"]
         .iter()
         .enumerate()
     {
@@ -247,6 +300,7 @@ async fn voice_language_speaker_profile_tool_and_force_changes_preserve_prior_au
         match *change {
             "voice" => config.synthesis.voice = "en-US-AriaNeural".into(),
             "language" => config.synthesis.language = "en".into(),
+            "deployment" => config.synthesis.deployment_revision = "synthetic-tts-v2".into(),
             "speaker" => {
                 config
                     .synthesis
@@ -263,19 +317,19 @@ async fn voice_language_speaker_profile_tool_and_force_changes_preserve_prior_au
     let forced = job(&store, &config, 20, true)?;
     let fresh = store.narrate(&forced, &request, &cancel).await?;
     assert_ne!(original.artifacts, fresh.artifacts);
-    assert_eq!(calls(&config), 6);
+    assert_eq!(calls(&config), 7);
     store.artifact(&original.artifacts[0])?;
     assert_eq!(
         fresh.artifacts,
         store.narrate(&forced, &request, &cancel).await?.artifacts
     );
-    assert_eq!(calls(&config), 6);
+    assert_eq!(calls(&config), 7);
     let later = job(&store, &config, 21, false)?;
     assert_eq!(
         fresh.artifacts,
         store.narrate(&later, &request, &cancel).await?.artifacts
     );
-    assert_eq!(calls(&config), 6);
+    assert_eq!(calls(&config), 7);
     fs::write(
         &config.tools.md2audio,
         format!("{PRODUCER}\n# changed executable version\n"),
@@ -285,7 +339,7 @@ async fn voice_language_speaker_profile_tool_and_force_changes_preserve_prior_au
         fresh.artifacts,
         store.narrate(&changed, &request, &cancel).await?.artifacts
     );
-    assert_eq!(calls(&config), 7);
+    assert_eq!(calls(&config), 8);
     Ok(())
 }
 #[tokio::test]

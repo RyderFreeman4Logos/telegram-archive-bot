@@ -641,3 +641,196 @@ async fn concurrent_verified_translation_generates_once_and_force_uses_fresh_run
     assert_eq!(server.count(), generated * 2);
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn product_shared_graph_translation_narration_export_restart_and_restore() -> Result<()> {
+    use std::collections::BTreeMap;
+    use telegram_archive_bot::{
+        jobs::Scope,
+        runtime,
+        sources::{Related, RelationKind},
+        x::{Post, Provider, XGraph},
+    };
+    struct GraphProvider(std::sync::Mutex<BTreeMap<String, usize>>);
+    impl Provider for GraphProvider {
+        fn name(&self) -> &'static str {
+            "synthetic-product"
+        }
+        fn fetch<'a>(
+            &'a self,
+            id: &'a str,
+            _: u64,
+            _: &'a CancellationToken,
+        ) -> futures_util::future::BoxFuture<'a, Result<Post, Failure>> {
+            Box::pin(async move {
+                *self.0.lock().unwrap().entry(id.into()).or_default() += 1;
+                Ok(Post {
+                    id: id.into(),
+                    content: Some(Content {
+                        body: format!("English source {id} with original facts."),
+                        metadata: ContentMetadata::default(),
+                    }),
+                    status: FetchStatus::Complete,
+                    relations: if id == "100" {
+                        vec![]
+                    } else {
+                        vec![Related {
+                            target: Identity::x("100").unwrap(),
+                            kind: if id == "101" {
+                                RelationKind::Quotes
+                            } else {
+                                RelationKind::RepliesTo
+                            },
+                        }]
+                    },
+                    previews: vec![],
+                    evidence: json!({"fixture":true}),
+                    raw: b"synthetic graph response".to_vec(),
+                })
+            })
+        }
+    }
+    let server = Server::new("ok").await?;
+    let root = tempfile::Builder::new()
+        .prefix("archive-product-")
+        .permissions(fs::Permissions::from_mode(0o700))
+        .tempdir_in("/var/tmp")?;
+    let store = Store::open(root.path().join("state"))?;
+    let producer = root.path().join("tts");
+    fs::write(
+        &producer,
+        r#"#!/usr/bin/python3
+import sys,shutil
+from pathlib import Path
+a=sys.argv[1:]
+assert Path(a[1]).read_text().strip()
+with Path(__file__).with_suffix('.calls').open('a') as f: f.write('called\n')
+shutil.copyfile(Path(__file__).with_suffix('.mp3'),a[a.index('--output')+1])
+"#,
+    )?;
+    fs::set_permissions(&producer, fs::Permissions::from_mode(0o700))?;
+    let generated = std::process::Command::new("/usr/bin/ffmpeg")
+        .args([
+            "-v",
+            "error",
+            "-nostdin",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=3",
+            "-c:a",
+            "libmp3lame",
+            "-b:a",
+            "96k",
+        ])
+        .arg(producer.with_extension("mp3"))
+        .status()?;
+    assert!(generated.success());
+    let mut config = Config {
+        state_dir: store.root().to_owned(),
+        ..Default::default()
+    };
+    config.telegram.bot_id = 123;
+    config.telegram.allowed_chats = vec![10];
+    config.telegram.allowed_users = vec![20];
+    config.translation.enabled = true;
+    config.translation.endpoint = server.endpoint.clone();
+    config.translation.model = "fixture-model".into();
+    config.translation.backend = "llama_cpp".into();
+    config.translation.deployment_revision = "fixture-product-v1".into();
+    config.translation.profile = "generic".into();
+    config.tools.hymt_bridge = bridge();
+    config.synthesis.enabled = true;
+    config.synthesis.deployment_revision = "synthetic-product-tts-v1".into();
+    config.tools.md2audio = producer.clone();
+    config.archive.directory = Some(root.path().join("archive"));
+    config.limits.llm_seconds = 60;
+    config.limits.media_seconds = 60;
+    config.validate()?;
+    let provider = Arc::new(GraphProvider(Default::default()));
+    let graph = XGraph::new(vec![provider.clone()]);
+    let cancel = CancellationToken::new();
+    let mut jobs = vec![];
+    for (n, id) in [(1, "101"), (2, "102")] {
+        let url = format!("https://x.com/fixture/status/{id}");
+        let update: Update = serde_json::from_value(
+            json!({"update_id":n,"message":{"message_id":n,"chat":{"id":10},"from":{"id":20},"text":url}}),
+        )?;
+        store.ingest(&config, &update, &json!({"fixture":"product-v1"}))?;
+        let lease = store.claim_phase(Phase::Fetch)?.unwrap();
+        jobs.push(lease.job.id.clone());
+        let traversal = graph
+            .traverse(&store, &url, &config, false, &cancel)
+            .await?;
+        store.accept_traversal(&lease, &traversal)?;
+    }
+    assert_eq!(provider.0.lock().unwrap().get("100"), Some(&1));
+    let canonical_a = store.current_revision(&Identity::x("100")?)?.unwrap();
+    for phase in [
+        Phase::Metadata,
+        Phase::Translate,
+        Phase::Download,
+        Phase::Synthesize,
+        Phase::Finalize,
+        Phase::Archive,
+    ] {
+        for _ in 0..2 {
+            assert!(runtime::step(&store, phase, &std::env::current_exe()?, &cancel).await?);
+        }
+    }
+    let scope = Scope {
+        bot_id: 123,
+        chat_id: 10,
+        user_id: 20,
+    };
+    for job in &jobs {
+        assert_eq!(
+            store.job_for(scope, job)?.state,
+            telegram_archive_bot::jobs::JobState::Complete
+        );
+        let outputs = store.phase_outputs(job)?;
+        let view = store.view(outputs["fetch"]["view_id"].as_str().unwrap())?;
+        assert!(
+            view.members
+                .iter()
+                .any(|m| m.revision_id.as_ref() == Some(&canonical_a))
+        );
+    }
+    assert_eq!(store.source_counts()?.1, 3);
+    assert_eq!(
+        server.count(),
+        3,
+        "shared A translation must use verified upstream cache"
+    );
+    assert_eq!(
+        fs::read_to_string(producer.with_extension("calls"))?
+            .lines()
+            .count(),
+        3
+    );
+    let before = telegram_archive_bot::operator::metrics(&store)?;
+    assert_eq!(before["queues"]["outbox"]["pending"], 6);
+    assert_eq!(before["job_retries"], 0);
+    drop(store);
+    let restarted = Store::open(&config.state_dir)?;
+    let after = runtime::replay(&config, &[], &cancel).await?;
+    assert_eq!(before, after);
+    assert_eq!(server.count(), 3);
+    let backup = root.path().join("backup");
+    restarted.backup(&backup)?;
+    let restore = root.path().join("restored");
+    Store::restore_backup(&backup, &restore)?;
+    let restored = Store::open(restore)?;
+    assert_eq!(restored.source_counts()?, restarted.source_counts()?);
+    assert_eq!(
+        restored.current_revision(&Identity::x("100")?)?,
+        Some(canonical_a)
+    );
+    assert!(restored.recovery_paused()?);
+    assert_eq!(
+        telegram_archive_bot::operator::metrics(&restored)?["queues"]["outbox"]["paused"],
+        6
+    );
+    restored.integrity()?;
+    Ok(())
+}

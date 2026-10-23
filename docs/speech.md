@@ -28,6 +28,13 @@ Melo. No pitch flag exists at the audited CLI boundary; nonzero pitch is
 rejected. Language, voice, speed, seed, volume, subtitle request, tool snapshot
 and input identity participate in the spoken plan and candidate derivations.
 
+Set `synthesis.deployment_revision` when the md2audio package, backend defaults
+and local model weights are pinned. Change it on deployment changes even if the
+Python console launcher has identical bytes. This declaration is part of each
+immutable spoken plan and cache identity; it does not attest remote weights.
+With an empty revision, retained audio can resume the same job, but an independent
+job must synthesize again. Delivery retries still reuse their retained artifact.
+
 Every invocation has a unique mode-0700 workspace, mode-0600 inputs/TOML,
 private HOME/cache, a copied snapshotted FFmpeg executable on its private PATH,
 no inherited credentials, and the shared process supervisor's byte/time/log
