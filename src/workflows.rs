@@ -716,7 +716,9 @@ mod tests {
             .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target"))?)
     }
     fn setup(store: &Store, text: &str) -> Result<Vec<String>> {
-        setup_config(store, text, Config::default())
+        let mut config = Config::default();
+        config.limits.llm_seconds = 5;
+        setup_config(store, text, config)
     }
     fn setup_config(store: &Store, text: &str, mut config: Config) -> Result<Vec<String>> {
         config.telegram.bot_id = 123;
@@ -724,7 +726,6 @@ mod tests {
         config.telegram.allowed_users = vec![20];
         config.model.output_tokens = 512;
         config.model.input_tokens = 2048;
-        config.limits.llm_seconds = 1;
         let update: Update = serde_json::from_value(
             json!({"update_id":1,"message":{"message_id":1,"chat":{"id":10},"from":{"id":20},"text":"fixture input"}}),
         )?;
@@ -877,7 +878,9 @@ mod tests {
         for (mode, cancelled) in [("silent", true), ("slow_body", false)] {
             let dir = temp()?;
             let store = Store::open(dir.path())?;
-            let revisions = setup(&store, "A synthetic observation.")?;
+            let mut config = Config::default();
+            config.limits.llm_seconds = 1;
+            let revisions = setup_config(&store, "A synthetic observation.", config)?;
             let lease = store.claim_job()?.unwrap();
             let (workflow, _) = workflow(store.clone(), mode);
             let token = CancellationToken::new();

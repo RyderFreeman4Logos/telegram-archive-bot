@@ -50,7 +50,7 @@ passed. The original push check first timed out during apt package installation;
 its rerun was superseded/cancelled by the successful PR check, before any claim of
 code-check success from that failed attempt.
 
-| F11 | Build pinned Rust bridge; host `cargo test --locked`; bridge `cargo test --locked --manifest-path integrations/hymt-bridge/Cargo.toml`; formatting and all-target Clippy for both workspaces | 58 host checks and 1 bridge check passed. Six integrated tests run the actual bridge against local HTTP: mixed Markdown/code/Unicode and multiple segments, verified cache reuse, changed profile invalidation, unverified bypass, detached configuration after file mutation, empty translated payload despite protected URL, retained-original truncation, failing later segment, silent cancellation/timeout, omitted sampler fields and ADK phase transition. A unit check rejects tampered byte hashes and invalid Unicode ranges; bridge error classification is tested without exposing provider bodies. | No live hymt/model quality or Telegram playback acceptance is claimed. Semantic fidelity is explicitly unverified; private upstream cache is disposable and currently has no disk quota. Full runtime admission and cache maintenance remain F18/F19. |
+| F11 | Build pinned Rust bridge; host `cargo test --locked`; bridge `cargo test --locked --manifest-path integrations/hymt-bridge/Cargo.toml`; formatting and all-target Clippy for both workspaces | Final rerun: 58 host checks and 1 bridge check passed; both all-target Clippy checks passed. Six integrated tests run the actual bridge against local HTTP: mixed Markdown/code/Unicode and multiple segments, verified cache reuse, changed profile invalidation, unverified bypass, detached configuration after file mutation, empty translated payload despite protected URL, retained-original truncation, failing later segment, silent cancellation/timeout, omitted sampler fields and ADK phase transition. A unit check rejects tampered byte hashes and invalid Unicode ranges; bridge error classification is tested without exposing provider bodies. | No live hymt/model quality or Telegram playback acceptance is claimed. Semantic fidelity is explicitly unverified; private upstream cache is disposable and currently has no disk quota. Full runtime admission and cache maintenance remain F18/F19. |
 
 The F11 fixture initially assumed every hymt request was streaming; the pinned
 implementation uses non-streaming calls for some later segments. The fixture was
@@ -58,3 +58,18 @@ corrected to serve both documented client paths. An empty completion with a
 protected URL revealed a real adapter validation gap; the bridge now rejects a
 result equal to reconstructing all translated segments as empty. Tests preserve
 that case. No semantic-completeness guarantee was added.
+
+The initial F11 commit recorded the 58-check run before its output was inspected;
+that run failed the newly added 503 classification assertion. This was a receipt
+error, not a successful run. The pinned upstream wraps segment failures in an
+additional anyhow context. Classification must inspect the cause chain, not only
+the outer message; the regression covers both forms. The final rerun below is the
+authoritative receipt.
+
+Final F11 rerun after the classification fix: bridge build, bridge test (1), host
+Clippy, and the entire host suite (58) all exited successfully. The normal ADK
+multi-node fixtures now use a five-second attempt budget; their previous shared
+one-second budget also caused two timeout failures under concurrent SQLite
+checkpoint load. The dedicated silent/slow-stream fixture still explicitly uses
+one second and still asserts Timeout, while cancellation retains its 30 ms
+trigger. Production timeout defaults and implementation are unchanged.

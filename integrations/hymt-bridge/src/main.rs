@@ -34,26 +34,26 @@ fn failure(error: &anyhow::Error) -> &'static str {
                 _ => "invalid_output",
             };
         }
-    }
-    // This pinned hymt wrapper formats ClientError instead of retaining its type.
-    let message = error.to_string();
-    if let Some(wrapped) = message
-        .strip_prefix("HTTP translation failed for segment ")
-        .and_then(|s| s.split_once("): ").map(|(_, cause)| cause))
-    {
-        if let Some(status) = wrapped
-            .strip_prefix("HTTP ")
-            .and_then(|s| s.split_once(": ").map(|(status, _)| status))
-            .and_then(|s| s.parse::<u16>().ok())
+        // This pinned hymt wrapper formats ClientError instead of retaining its type.
+        let message = cause.to_string();
+        if let Some(wrapped) = message
+            .strip_prefix("HTTP translation failed for segment ")
+            .and_then(|s| s.split_once("): ").map(|(_, cause)| cause))
         {
-            return match status {
-                429 => "rate_limited",
-                500..=599 => "unavailable",
-                _ => "invalid_output",
-            };
-        }
-        if wrapped.starts_with("request error: ") {
-            return "network";
+            if let Some(status) = wrapped
+                .strip_prefix("HTTP ")
+                .and_then(|s| s.split_once(": ").map(|(status, _)| status))
+                .and_then(|s| s.parse::<u16>().ok())
+            {
+                return match status {
+                    429 => "rate_limited",
+                    500..=599 => "unavailable",
+                    _ => "invalid_output",
+                };
+            }
+            if wrapped.starts_with("request error: ") {
+                return "network";
+            }
         }
     }
     "invalid_output"
@@ -227,6 +227,10 @@ mod tests {
                 "HTTP translation failed for segment 2 (source_unicode_scalars=10, approx_source_tokens=4): HTTP {status}: private body mentioning HTTP 429: retry"
             );
             assert_eq!(failure(&error), expected);
+            assert_eq!(
+                failure(&error.context("segment translation failed")),
+                expected
+            );
         }
         assert_eq!(
             failure(&anyhow::anyhow!(
