@@ -209,7 +209,7 @@ fn temp() -> Result<tempfile::TempDir> {
 }
 fn bridge() -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("integrations/hymt-bridge/target/debug/archive-hymt-bridge");
+        .join("integrations/hymt-bridge/target/release/archive-hymt-bridge");
     assert!(
         path.is_file(),
         "build integrations/hymt-bridge before running the integrated suite"
