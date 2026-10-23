@@ -554,6 +554,7 @@ async fn concurrent_verified_translation_generates_once_and_force_uses_fresh_run
         .collect::<String>();
     let (first, id) = prepare(&store, &server, &text, 1, "generic", 30)?;
     let (second, _) = prepare(&store, &server, &text, 2, "generic", 30)?;
+    assert_eq!(first.job.config_id, second.job.config_id);
     let revision = store.revision(&id)?;
     let translator = HymtTranslator {
         store: store.clone(),
@@ -566,7 +567,19 @@ async fn concurrent_verified_translation_generates_once_and_force_uses_fresh_run
     let a = a?;
     let b = b?;
     let m = manifest(&store, &a)?;
-    assert_eq!(m.output_digest, manifest(&store, &b)?.output_digest);
+    let other = manifest(&store, &b)?;
+    let left = store.read_blob(&m.output_digest, 1_048_576)?;
+    let right = store.read_blob(&other.output_digest, 1_048_576)?;
+    assert_eq!(
+        m.output_digest,
+        other.output_digest,
+        "calls={} first_report={} second_report={} first_output={} second_output={}",
+        server.count(),
+        serde_json::to_string(&m)?,
+        serde_json::to_string(&other)?,
+        String::from_utf8_lossy(&left),
+        String::from_utf8_lossy(&right)
+    );
     assert!(m.report.cache_verified);
     let generated = server.count();
     assert_eq!(generated, m.report.segments);
