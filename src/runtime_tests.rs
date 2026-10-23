@@ -30,6 +30,22 @@ fn scope() -> Scope {
         user_id: 3,
     }
 }
+#[test]
+fn retry_metric_counts_repeated_phase_attempts_and_excludes_phase_progress() -> Result<()> {
+    let (_root, store, config) = fixture()?;
+    let first = lease(&store, &config, 1, "Synthetic retry metrics")?;
+    assert_eq!(crate::operator::metrics(&store)?["job_retries"], 0);
+    store.fail_phase(&first, Failure::Network)?;
+    store
+        .connection()?
+        .execute("UPDATE jobs SET available_at=0", [])?;
+    let retry = store.claim_phase(Phase::Fetch)?.unwrap();
+    assert_eq!(crate::operator::metrics(&store)?["job_retries"], 1);
+    store.finish_phase(&retry, &json!({}), Some(Phase::Metadata), false)?;
+    store.claim_phase(Phase::Metadata)?.unwrap();
+    assert_eq!(crate::operator::metrics(&store)?["job_retries"], 1);
+    Ok(())
+}
 #[tokio::test]
 async fn lost_fetch_owner_cannot_capture_select_view_or_finish() -> Result<()> {
     let (_root, store, config) = fixture()?;

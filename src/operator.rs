@@ -31,7 +31,7 @@ pub fn metrics(store: &Store) -> Result<Value> {
     let (events,cursor):(u64,u64)=conn.query_row("SELECT (SELECT coalesce(max(id),0) FROM projection_events),(SELECT coalesce(min(event_id),0) FROM projection_cursors)",[],|r|Ok((r.get(0)?,r.get(1)?)))?;
     let (runs,uses):(u64,u64)=conn.query_row("SELECT (SELECT count(*) FROM transformation_runs),(SELECT count(*) FROM transformation_uses)",[],|r|Ok((r.get(0)?,r.get(1)?)))?;
     let retries: u64 = conn.query_row(
-        "SELECT coalesce(sum(max(attempt-1,0)),0) FROM jobs",
+        "SELECT coalesce(sum(max(attempts-1,0)),0) FROM phase_attempts",
         [],
         |r| r.get(0),
     )?;
