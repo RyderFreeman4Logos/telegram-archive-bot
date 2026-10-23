@@ -69,7 +69,9 @@ acceptance. A separate versioned review stage would be needed for that.
 The durable phase output advances to download only after the complete ADK graph
 finishes. A death before phase commit can re-execute nodes; verified hymt cache
 entries may avoid provider generation, while unverified inputs run again.
-Completed phase outputs prevent retranslation after commit. Per-node ADK
+Completed phase outputs prevent retranslation after commit. Old snapshots retain their
+original serialized identity when new defaulted configuration fields are added;
+the lease fence compares normalized values separately from the original hash. Per-node ADK
 checkpoints are currently used by metadata, not this translation graph.
 Cross-job coalescing and full runtime admission remain F18/F19 work.
 

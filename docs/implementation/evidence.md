@@ -73,3 +73,11 @@ one-second budget also caused two timeout failures under concurrent SQLite
 checkpoint load. The dedicated silent/slow-stream fixture still explicitly uses
 one second and still asserts Timeout, while cancellation retains its 30 ms
 trigger. Production timeout defaults and implementation are unchanged.
+
+A subsequent compatibility check added one recovery regression: old serialized
+configuration snapshots missing a newly defaulted field keep their original
+content hash and can resume, while mutation of the normalized claimed snapshot
+is rejected. The fence now hashes the original database strings and compares
+normalized configuration values separately. After this change, formatting,
+all-target host Clippy and all **59 host tests** passed. The bridge was unchanged
+from its passing 1-test receipt.

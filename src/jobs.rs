@@ -145,12 +145,16 @@ fn load_job(conn: &rusqlite::Connection, id: &str) -> Result<Job> {
 }
 
 pub(crate) fn fence(tx: &Transaction<'_>, lease: &Lease, time: i64) -> Result<()> {
+    let (config, tools): (String, String) = tx.query_row(
+        "SELECT config,tools FROM config_snapshots WHERE id=?1",
+        [&lease.job.config_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let canonical: Config = serde_json::from_str(&config)?;
     ensure!(
-        digest(format!(
-            "{}\n{}",
-            serde_json::to_string(&lease.config)?,
-            serde_json::to_string(&lease.tools)?
-        )) == lease.job.config_id,
+        digest(format!("{config}\n{tools}")) == lease.job.config_id
+            && serde_json::to_value(&canonical)? == serde_json::to_value(&lease.config)?
+            && serde_json::from_str::<Value>(&tools)? == lease.tools,
         Failure::InvalidInput
     );
     let valid=tx.query_row("SELECT EXISTS(SELECT 1 FROM jobs WHERE id=?1 AND state='running' AND phase=?2 AND generation=?3 AND lease_until>?4 AND deadline>?4 AND cancel_requested=0)",params![lease.job.id,lease.job.phase.as_str(),lease.generation,time],|r|r.get::<_,bool>(0))?;
@@ -471,6 +475,35 @@ mod tests {
                 user_id: 3,
             },
         ))
+    }
+
+    #[test]
+    fn old_snapshot_defaults_preserve_hash_and_reject_claimed_mutation() -> Result<()> {
+        let (_dir, store, _) = fixture()?;
+        let conn = store.connection()?;
+        let (config, tools): (String, String) = conn.query_row(
+            "SELECT config,tools FROM config_snapshots LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let mut old: Value = serde_json::from_str(&config)?;
+        old["translation"]
+            .as_object_mut()
+            .unwrap()
+            .remove("backend");
+        let old = serde_json::to_string(&old)?;
+        let id = digest(format!("{old}\n{tools}"));
+        conn.execute(
+            "INSERT INTO config_snapshots VALUES(?1,?2,?3)",
+            params![id, old, tools],
+        )?;
+        conn.execute("UPDATE jobs SET config_id=?1", [id])?;
+        let mut lease = store.claim_at(1000)?.unwrap();
+        assert_eq!(lease.config.translation.backend, "openai_compatible");
+        store.heartbeat_at(&lease, 1001)?;
+        lease.config.translation.backend = "llama_cpp".into();
+        assert!(store.heartbeat_at(&lease, 1002).is_err());
+        Ok(())
     }
 
     #[test]
