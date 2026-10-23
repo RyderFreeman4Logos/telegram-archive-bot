@@ -275,6 +275,12 @@ impl Store {
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute("UPDATE jobs SET state='failed',error='absolute_deadline_exhausted',generation=generation+1 WHERE state IN ('queued','retryable','running') AND deadline<=?1",[time])?;
+        if tx.query_row("SELECT EXISTS(SELECT 1 FROM operational_holds)", [], |r| {
+            r.get::<_, bool>(0)
+        })? {
+            tx.commit()?;
+            return Ok(None);
+        }
         let selected = loop {
             let id=tx.query_row("SELECT id FROM jobs WHERE cancel_requested=0 AND (?2 IS NULL OR phase=?2) AND ((state IN ('queued','retryable') AND available_at<=?1) OR (state='running' AND lease_until<=?1)) ORDER BY available_at,rowid LIMIT 1",params![time,phase.map(Phase::as_str)],|r|r.get::<_,String>(0)).optional()?;
             let Some(id) = id else {

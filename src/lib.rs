@@ -9,6 +9,7 @@ pub mod media;
 pub mod network;
 pub mod process;
 pub mod projection;
+pub mod recovery;
 pub mod sources;
 pub mod speech;
 pub mod storage;
