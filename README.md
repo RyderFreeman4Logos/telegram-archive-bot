@@ -14,7 +14,8 @@ contains no prior bot implementation or archive data.
 Read the [release notes](docs/release-notes-0.1.0-rc.1.md) and
 [actual acceptance evidence](docs/verification/f20.md) before activation.
 Real model/translation/TTS, downloads and three Telegram audio receipts passed;
-Desktop/Android seeking and speed controls remain blocked by client access.
+Desktop seeking and speed controls remain blocked by client access; Android
+playback is pending confirmation of the phone's test recipient.
 
 ## Build and offline checks
 

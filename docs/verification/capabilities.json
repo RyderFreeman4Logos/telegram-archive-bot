@@ -138,9 +138,9 @@
       "client": "Telegram Android",
       "version": "10.14.3 (49279)",
       "os": "Android 14 / API 34; Pixel 4a (5G)",
-      "seek": "blocked",
-      "speed": "blocked",
-      "reason": "ADB device authorized but screen locked; NotificationShade, mAwake=false, mDreamingLockscreen=true"
+      "seek": "pending-recipient-confirmation",
+      "speed": "pending-recipient-confirmation",
+      "reason": "Operator-authorized unlock succeeded; test bot shows START and no previous messages. Confirmation to add the phone account as a test recipient is pending."
     }
   ],
   "activation": {
@@ -155,5 +155,14 @@
     "os": "Debian 12",
     "glibc": "2.36",
     "portability": "The prebuilt pair is host-tuned, not a generic x86_64 CPU baseline. Build from source on other CPUs."
+  },
+  "installed_candidate": {
+    "source_commit": "42b2eef909a07014f36c31dd8e2a51ca515d916e",
+    "source_tree": "aea629e05c697eb532326b322efc8298b8c8807b",
+    "bot_sha256": "29120e7509d19ec1298bc18e03d0f70dd9232df3775d4c30ca73543aff554bfb",
+    "bridge_sha256": "fd4f22cf60c8012de49b3e5aead7c547083aa3f6c9f9bb46c18940834aecb149",
+    "offline_acceptance": "passed",
+    "receipt_sha256": "a988258e5c556f1c7ce890b65f169efa95afac4dcac1fb2516331b10690e6b09",
+    "old_live_state_replay": "passed; all 36 retained tables unchanged; no new delivery requested"
   }
 }

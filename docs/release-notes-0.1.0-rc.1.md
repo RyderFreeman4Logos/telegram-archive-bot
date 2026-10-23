@@ -58,8 +58,9 @@ and doctor do not start a Telegram poller or replace the existing bot.
 
 ## Known gaps
 
-Desktop 4.6.5 and Android 10.14.3 playback controls remain untested because the
-graphical session is unauthorized and the connected phone is locked. The exact
+Desktop 4.6.5 and Android 10.14.3 playback controls remain untested: the desktop
+graphical session is unauthorized; the phone is now unlocked, but adding its
+account as a test recipient awaits confirmation. The exact
 matrix remains tracked in issue #41. FxEmbed returned partial data for the live X
 samples; provider availability varies. Remote model weights/defaults were not
 attested and translation semantic fidelity is not guaranteed. Local/multi-speaker

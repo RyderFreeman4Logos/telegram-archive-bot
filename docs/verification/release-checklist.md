@@ -12,8 +12,9 @@ This is the active acceptance ledger, not a production-validation claim.
   and [40018465385](https://github.com/RyderFreeman4Logos/telegram-archive-bot/actions/runs/40018465385) passed.
 - [x] Audit every F01–F20 criterion and production caller in
   [feature acceptance](feature-acceptance.md); retain F15 A6 in #41.
-- [x] Close 16 satisfied core issues after runtime integration reached main;
-  F01/F12/F20 remain until final release/provenance/custody checks finish.
+- [x] Reconcile all F01–F19 issue states after merged evidence; the separately
+  tracked F15 client residual remains in #41. The cache correction #43 is closed;
+  F20 remains until candidate publication is verified.
 - [x] Reproduce and fix unpinned TTS cache identity (#43); retain the failing
   real-audio regression and verify both same-job recovery and pinned sharing.
 - [x] Complete product scenarios and the [G01–G12 evidence matrix](f20.md).
@@ -26,10 +27,13 @@ This is the active acceptance ledger, not a production-validation claim.
   record exact versions and any unavailable client access without claiming a pass.
 - [x] Record both Rust license inventories, external tool versions, historical
   clean-clone receipt, capabilities, limits and rollback guidance.
-- [ ] Review the final change and pass formatting, lint, tests and release builds
-  for both Rust workspaces on the final candidate.
-- [ ] Merge F20, reinstall the final public revision using Cargo, and verify the
-  effective PATH binaries, hashes and installed-binary acceptance.
+- [x] Review source and pass both workspaces' complete local gate at `42b2eef`:
+  formatting, Clippy, 137 host tests, one bridge test and both release builds.
+- [x] Reinstall that exact public candidate using Cargo and verify the effective
+  PATH binaries, hashes, installed-binary acceptance and retained-state replay.
+- [x] Complete [hosted gate 40022169182](https://github.com/RyderFreeman4Logos/telegram-archive-bot/actions/runs/40022169182)
+  and merge F20 at `fe8a4d5`, whose full source tree matches installed `42b2eef`.
+  Later receipt-only revisions require a separate binary-input comparison.
 - [ ] Publish the documented prerelease with binaries/checksums/license evidence,
   reconcile issue states, and verify the published assets and clean checkout.
 
@@ -62,6 +66,11 @@ compaction. Completion requires evidence, not a lower open-issue count.
 
 Each historical receipt keeps its source revision; it does not transfer to the
 final candidate after changes. Failed hosted runs remain failed evidence.
+
+Final source candidate `42b2eef` passed the complete local and hosted gates with
+137 host tests and one bridge test. A fresh public-clone Cargo installation and
+installed-command acceptance passed; the retained real test state also repeated
+without changing any of its 36 tables. See the [final candidate receipt](f20.md#final-candidate-and-installed-executable).
 
 At `852a24b`, both format and all-target Clippy checks, **136 host tests and
 one bridge test**, and both release builds exited 0 in the complete local gate.
