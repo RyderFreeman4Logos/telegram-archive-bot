@@ -95,3 +95,5 @@ stderr log limit. Host proxy tasks are cancelled and joined before a result is
 selected. The snapshot compatibility regression also removes the newly defaulted
 Bubblewrap field, confirming that an older snapshot still resumes without
 changing its stored hash.
+
+F12 hosted run [39991618324](https://github.com/RyderFreeman4Logos/telegram-archive-bot/actions/runs/39991618324) failed four media fixtures with ToolExit / missing start marker. Local real-namespace fixtures passed; hosted wrapper stderr was not retained, so AppArmor is a hypothesis until the explicit namespace probe runs. CI now prints a real namespace probe, permits user namespaces nonpersistently on its disposable Ubuntu VM when needed, then requires the same probe and all tests to pass. Production remains fail-closed and changes no host policy. See [Ubuntu 24.04 release notes](https://documentation.ubuntu.com/release-notes/24.04/) for that runner prerequisite.
