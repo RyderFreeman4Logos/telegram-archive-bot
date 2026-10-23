@@ -175,6 +175,33 @@ impl Server {
     }
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fixture_preflight_survives_a_blocked_host_executor() -> Result<()> {
+    let server = Server::new("ok").await?;
+    let props = server.endpoint.replace("/v1", "/props");
+    let client = std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                reqwest::Client::new()
+                    .get(props)
+                    .timeout(Duration::from_secs(3))
+                    .send()
+                    .await
+                    .is_ok_and(|r| r.status().is_success())
+            })
+    });
+    // Deliberate executor stall: canonical storage work must not starve the fake server.
+    std::thread::sleep(Duration::from_secs(4));
+    assert!(
+        client.join().unwrap(),
+        "fake preflight server was starved by the host executor"
+    );
+    Ok(())
+}
+
 fn temp() -> Result<tempfile::TempDir> {
     Ok(tempfile::Builder::new()
         .permissions(fs::Permissions::from_mode(0o700))
@@ -269,7 +296,7 @@ fn derivatives(store: &Store) -> Result<i64> {
     )
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mixed_markdown_verified_cache_profile_and_snapshot() -> Result<()> {
     let server = Server::new("ok").await?;
     let temp = temp()?;
@@ -326,7 +353,7 @@ async fn mixed_markdown_verified_cache_profile_and_snapshot() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unverified_identity_does_not_reuse_application_cache() -> Result<()> {
     let server = Server::new("unverified").await?;
     let temp = temp()?;
@@ -356,7 +383,7 @@ async fn unverified_identity_does_not_reuse_application_cache() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn truncation_failure_empty_and_semantic_claims_are_distinct() -> Result<()> {
     for mode in [
         "length",
@@ -421,7 +448,7 @@ async fn truncation_failure_empty_and_semantic_claims_are_distinct() -> Result<(
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn silent_bridge_cancellation_timeout_and_no_complete_publication() -> Result<()> {
     for cancel_run in [true, false] {
         let server = Server::new("silent").await?;
@@ -471,7 +498,7 @@ async fn silent_bridge_cancellation_timeout_and_no_complete_publication() -> Res
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn adk_calls_host_translator_and_commits_phase() -> Result<()> {
     let server = Server::new("ok").await?;
     let temp = temp()?;
@@ -498,7 +525,7 @@ async fn adk_calls_host_translator_and_commits_phase() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bridge_detaches_configuration_before_first_segment() -> Result<()> {
     let server = Server::new("slow").await?;
     let temp = temp()?;
@@ -544,7 +571,7 @@ async fn bridge_detaches_configuration_before_first_segment() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concurrent_verified_translation_generates_once_and_force_uses_fresh_run() -> Result<()> {
     let server = Server::new("counted").await?;
     let root = temp()?;
