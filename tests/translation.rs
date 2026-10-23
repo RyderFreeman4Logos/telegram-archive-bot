@@ -209,7 +209,7 @@ fn temp() -> Result<tempfile::TempDir> {
 }
 fn bridge() -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("integrations/hymt-bridge/target/debug/archive-hymt-bridge");
+        .join("integrations/hymt-bridge/target/release/archive-hymt-bridge");
     assert!(
         path.is_file(),
         "build integrations/hymt-bridge before running the integrated suite"
@@ -510,7 +510,25 @@ async fn adk_calls_host_translator_and_commits_phase() -> Result<()> {
             store: store.clone(),
         }),
     };
-    workflow.run(&lease, CancellationToken::new()).await?;
+    let bridge_bytes = fs::metadata(bridge())?.len();
+    let started = std::time::Instant::now();
+    let result = workflow.run(&lease, CancellationToken::new()).await;
+    if let Err(error) = result {
+        let elapsed = started.elapsed();
+        let hash_started = std::time::Instant::now();
+        let _ = telegram_archive_bot::digest(fs::read(bridge())?);
+        let conn = rusqlite::Connection::open(store.root().join("archive.sqlite"))?;
+        let attempts: Vec<String> = conn
+            .prepare("SELECT status FROM model_attempts")?
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        anyhow::bail!(
+            "workflow failed: {error}; workflow_ms={}; bridge_bytes={bridge_bytes}; independent_hash_ms={}; provider_posts={}; attempts={attempts:?}",
+            elapsed.as_millis(),
+            hash_started.elapsed().as_millis(),
+            server.count()
+        );
+    }
     assert_eq!(
         store.phase_outputs(&lease.job.id)?["translate"]["translations"]
             .as_array()
