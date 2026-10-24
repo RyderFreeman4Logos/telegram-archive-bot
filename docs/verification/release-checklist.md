@@ -1,14 +1,19 @@
 # Release candidate verification
 
-Current target: **0.1.0-rc.2**. At this pre-publication source snapshot, final
-RC2 installation/runtime attestation, the full main-corpus Git export/restore,
+Current target: **0.1.0-rc.3**. At this pre-publication source snapshot, final
+RC3 installation/runtime attestation, the full main-corpus Git export/restore,
 asset publication and download verification remain pending. Required release
 verification assets must bind the final source commit/tree, eight-command gate,
 independent review, Cargo-installed executables and runtime activation. A
 post-publication receipt must verify the downloaded assets. The release archive
 must record frozen private-corpus counts, corrections, integrity/reuse checks,
 Git export/restore and storage measurements without publishing private inputs.
-See [RC2 notes](../release-notes-0.1.0-rc.2.md) and
+RC2 installation and runtime were separately attested; those receipts retain
+their original source identity. RC3 adds bounded Git index writes with a
+real-Git regression and six public CLI large-index controls. The performance
+leaf's exact-source gate passed with 178 tests passed and two ignored; the
+versioned RC3 source requires its own final gate and review.
+See [RC3 notes](../release-notes-0.1.0-rc.3.md) and
 [legacy parity](../legacy-parity.md). Prior provider receipts retain their source
 identities; client/credential limits are not converted into passing checks.
 

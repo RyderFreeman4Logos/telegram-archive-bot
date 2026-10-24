@@ -76,3 +76,41 @@ An earlier incorrect fixture count was corrected separately and is not counted
 as a product failure. Installed migration, index storage cost and full-corpus
 recovery require their own receipts. After opening schema 12, rolling back to a
 schema-11 executable requires restoring a verified pre-upgrade backup.
+
+## Bounded Git index updates
+
+Project-Spec: `rust-telegram-archive-bot-v1`; Spec-ID: F16, F20.
+[Issue #64](https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/64)
+batches up to 64 managed entries per `git update-index` invocation. It preserves
+knowledge-event commit boundaries and staged/worktree conflict and recovery
+checks. A real-Git regression observed 129 calls on the old helper and three on
+the candidate, with exact entries, empty input, space/comma paths and unrelated
+staging preserved.
+
+A separate public `project --limit 1` comparison starts each case with 100,000
+unrelated committed files and one unrelated staged file, then projects four
+knowledge-event groups from the same synthetic canonical fixture. Baseline and
+candidate alternate three times. Baseline source tree is
+`b223c8ebf554263f2484e5719c53ccc30f4da96b` (RC2 `70dc6471`, identical to main
+`56640473`); candidate source is `805f502ad7d55e7af24211ae6f3590e2b44abca6`.
+The measured binary SHA256 values are respectively
+`1811b1abd79dcd41db2e3b3dd5eb3ab5538cddc89b65899d05bf66f8eb32c549` and
+`913f35a567f8b5682dbf19aec188cb0b22561b1a7f2e29c6224588ae0ece3cdd`.
+
+| Pair | Baseline seconds | Batched seconds | Index-update calls before / after |
+| --- | ---: | ---: | ---: |
+| 1 | 2.964 | 2.011 | 40 / 8 |
+| 2 | 2.964 | 2.061 | 40 / 8 |
+| 3 | 2.913 | 2.011 | 40 / 8 |
+
+All six cases have identical Git trees and index listings, preserve unrelated
+staging, and pass Git fsck and canonical verification. Timings measure the four
+projection commands, excluding fixture preparation and final verification.
+The exact-source eight-command gate passed with 178 tests passed, zero failed
+and two ignored. Benchmark receipt SHA256:
+`156df4c8d5f139fa173cb21d2948ccede15b52994112cb2ece5b65db1207b2c8`.
+
+These are sequential synthetic-index observations under ongoing export load,
+without a confidence interval or causal timing attribution. They do not measure
+the entire private corpus, physical SSD wear or provider latency. The pinned
+full-corpus export remains a separate acceptance run with its original binary.

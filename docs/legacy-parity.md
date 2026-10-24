@@ -31,7 +31,7 @@ An implemented path is not evidence that every live source can be recovered.
 | Replies to initiating message, `reply_to` | New persisted origin and Bot API `reply_parameters` | JSON/multipart/restart fixtures passed; current user-client association unobserved |
 | Configuration reload, `load_config` | Validated SIGHUP activation, immutable running-job snapshots | Immutable operation selection and reload/refresh fixtures passed |
 | Restart/network retry and authorization | Service lock, persisted cursor, bounded job retries, chat + user allowlists | Source-bound recovery/authorization fixtures and separate runtime activation receipts |
-| Requested historical reply commands | `/translate`, `/tts`, `/summarize`, `/start` | Source scoping and operation identity fixtures passed at recorded revisions; final RC2 installation/runtime attestation pending; user-client roundtrip unobserved |
+| Requested historical reply commands | `/translate`, `/tts`, `/summarize`, `/start` | Source scoping and operation identity fixtures passed at recorded revisions; RC2 installation/runtime attested; RC3 installation/runtime pending; user-client roundtrip unobserved |
 
 The batch campaigns retain each run's exact executable digest, private canonical storage and
 disabled Telegram sends/Git pushes. Model generation, translation and narration
