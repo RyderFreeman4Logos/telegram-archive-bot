@@ -25,6 +25,17 @@ An empty Article block list initially reproduced a false hydrated-body result.
 The parser regression then passed after hydration required actual body text.
 The focused X, configuration, HTTP and guest tests and all-target Clippy passed.
 
+Independent review found ordinary `/article/` text could misclassify a post and
+JSON-escaped authentication text could bypass the literal-byte guard. Both have
+observed failing regressions. Article admission now shares parsed X host/path/ID
+checks across official and FxEmbed inputs. The actual parser-to-graph fixture
+checks ordinary prose, external and lookalike hosts, and genuine Article links.
+Authentication checks cover decoded JSON keys and values as well as raw bytes,
+including the token rejected during the same fetch. The provider/storage fixture
+rejects escaped token/bearer content and raw-only fields without creating a
+revision or CAS object. Preliminary test compile and temporary-directory permission errors are retained
+separately and are not the behavioral failure evidence.
+
 On 2026-10-24 at 05:39 UTC, the actual Rust guest provider returned HTTP 200 for
 one privately selected public Article. All 132 nonempty text blocks were retained
 in the canonical revision (11,127 body bytes); the 51,028-byte raw response was

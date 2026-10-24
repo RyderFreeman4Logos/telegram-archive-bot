@@ -62,6 +62,7 @@ impl Guest {
     ) -> Result<Post, Failure> {
         let mut remaining = max_bytes;
         let mut rejected_token_status = None;
+        let mut rejected_token = None;
         for refresh in 0..2 {
             let (token, reused) = {
                 let mut cached = tokio::select! { biased;
@@ -129,6 +130,7 @@ impl Guest {
             remaining = remaining.saturating_sub(response.bytes.len() as u64);
             if matches!(response.status, 401 | 403) && refresh == 0 {
                 rejected_token_status = Some(response.status);
+                rejected_token = Some(token.clone());
                 let mut cached = tokio::select! { biased;
                     _=cancel.cancelled()=>return Err(Failure::Cancelled), value=self.token.lock()=>value,
                 };
@@ -137,8 +139,23 @@ impl Guest {
                 }
                 continue;
             }
+            let payload: Result<Value, _> = serde_json::from_slice(&response.bytes);
+            let secrets = [
+                token.as_str(),
+                self.bearer.as_str(),
+                rejected_token.as_deref().unwrap_or_default(),
+            ];
+            // JSON escapes must not hide authentication material in decoded content or raw-only fields.
+            let echoes_auth = secrets.iter().filter(|s| !s.is_empty()).any(|secret| {
+                response
+                    .bytes
+                    .windows(secret.len())
+                    .any(|part| part == secret.as_bytes())
+            }) || payload
+                .as_ref()
+                .is_ok_and(|value| contains_auth(value, &secrets));
             let mut post = match response.status {
-                200 => serde_json::from_slice(&response.bytes)
+                200 => payload
                     .map_err(|_| Failure::InvalidOutput)
                     .and_then(|value| parse(id, &value))
                     .unwrap_or_else(|_| {
@@ -152,16 +169,6 @@ impl Guest {
                 _ => Post::unavailable(id, FetchStatus::Error, "guest_article_endpoint_error"),
             };
             // Activation payloads and accidentally echoed authentication material are never archived.
-            let echoes_auth =
-                [&token, &self.bearer]
-                    .iter()
-                    .filter(|s| !s.is_empty())
-                    .any(|secret| {
-                        response
-                            .bytes
-                            .windows(secret.len())
-                            .any(|part| part == secret.as_bytes())
-                    });
             if echoes_auth {
                 post = Post::unavailable(
                     id,
@@ -182,6 +189,22 @@ impl Guest {
             return Ok(post);
         }
         Err(Failure::Internal)
+    }
+}
+
+fn contains_auth(value: &Value, secrets: &[&str]) -> bool {
+    let contains = |text: &str| {
+        secrets
+            .iter()
+            .any(|secret| !secret.is_empty() && text.contains(secret))
+    };
+    match value {
+        Value::String(text) => contains(text),
+        Value::Array(values) => values.iter().any(|value| contains_auth(value, secrets)),
+        Value::Object(fields) => fields
+            .iter()
+            .any(|(key, value)| contains(key) || contains_auth(value, secrets)),
+        _ => false,
     }
 }
 
@@ -322,6 +345,15 @@ mod tests {
     }
     impl Fixture {
         async fn new(replies: Vec<(u16, Value)>) -> Self {
+            Self::raw(
+                replies
+                    .into_iter()
+                    .map(|(status, body)| (status, body.to_string()))
+                    .collect(),
+            )
+            .await
+        }
+        async fn raw(replies: Vec<(u16, String)>) -> Self {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let mut guest = Guest::new(
                 PublicHttp::fixture_to(listener.local_addr().unwrap()),
@@ -345,7 +377,6 @@ mod tests {
                         .lock()
                         .unwrap()
                         .push(String::from_utf8(input).unwrap());
-                    let body = body.to_string();
                     let response = format!(
                         "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                         body.len()
@@ -467,6 +498,82 @@ mod tests {
             post.evidence["raw_response_discarded_for_credentials"],
             true
         );
+    }
+
+    #[tokio::test]
+    async fn escaped_authentication_echoes_cannot_enter_canonical_storage() {
+        use std::os::unix::fs::PermissionsExt;
+        for secret in ["SYNTHETIC_GUEST_ONE", "SYNTHETIC_PUBLIC_CLIENT"] {
+            for location in ["body", "key", "nested_value"] {
+                for refresh in [false, true] {
+                    let mut response = payload(
+                        json!({"plain_text":if location == "body" {secret} else {"Benign body"}}),
+                    );
+                    if location == "key" {
+                        response[secret] = json!(true);
+                    }
+                    if location == "nested_value" {
+                        response["extra"] = json!({"nested":[secret]});
+                    }
+                    let wire = response
+                        .to_string()
+                        .replace("SYNTHETIC_", r"\u0053YNTHETIC_");
+                    assert!(!wire.contains(secret));
+                    let mut replies = vec![(
+                        200,
+                        json!({"guest_token":"SYNTHETIC_GUEST_ONE"}).to_string(),
+                    )];
+                    if refresh {
+                        replies.extend([
+                            (401, json!({"denied":true}).to_string()),
+                            (
+                                200,
+                                json!({"guest_token":"SYNTHETIC_GUEST_TWO"}).to_string(),
+                            ),
+                        ]);
+                    }
+                    replies.push((200, wire));
+                    let fixture = Fixture::raw(replies).await;
+                    let post = fixture
+                        .guest
+                        .fetch("100", 32768, &CancellationToken::new())
+                        .await
+                        .unwrap();
+                    assert!(
+                        post.content.is_none() && post.raw.is_empty(),
+                        "decoded credentials must not become content or raw evidence"
+                    );
+                    assert_eq!(
+                        post.evidence["raw_response_discarded_for_credentials"],
+                        true
+                    );
+                    let directory = tempfile::Builder::new()
+                        .permissions(std::fs::Permissions::from_mode(0o700))
+                        .tempdir()
+                        .unwrap();
+                    let store = crate::storage::Store::open(directory.path()).unwrap();
+                    let capture = crate::sources::Capture {
+                        identity: crate::sources::Identity::x("100").unwrap(),
+                        submitted_url: None,
+                        content: post.content,
+                        status: post.status,
+                        extractor: fixture.guest.name().into(),
+                        evidence: post.evidence,
+                        raw_digest: None,
+                        relations: post.relations,
+                    };
+                    let receipt = store.capture(&capture).unwrap();
+                    assert!(receipt.is_none());
+                    store.integrity().unwrap();
+                    assert_eq!(
+                        std::fs::read_dir(directory.path().join("blobs"))
+                            .unwrap()
+                            .count(),
+                        0
+                    );
+                }
+            }
+        }
     }
 
     #[tokio::test]

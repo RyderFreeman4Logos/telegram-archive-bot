@@ -47,8 +47,9 @@ hydrated articles do not invoke it. This is separate from the official X API
 bearer and does not establish access to private posts. The pinned guest query can
 become unavailable when the upstream web API changes; denial remains explicit.
 Restart the service after rotating this bearer file so the cached provider is
-reconstructed. Guest tokens remain in memory for at most one hour; one rejected
-token refresh is allowed within the same request byte and time budget.
+reconstructed. Guest tokens are reused for up to one hour and remain in memory
+until the next fetch replaces an expired token or the provider is dropped. One
+rejected token refresh is allowed within the same request byte and time budget.
 
 Local TTS plus multiple speakers is rejected. Speakers are explicit resolved
 voice assignments, not random choices at execution. Speech defaults to Chinese
