@@ -323,8 +323,21 @@ async fn git_only_rebuild_preserves_semantics_and_reports_unavailable_bytes() ->
     store.project(&config, 100, &cancel).await?;
     let archive = config.archive.directory.as_ref().unwrap();
     let exported = tree(archive)?;
+    let mut bounded = config.clone();
+    bounded.limits.semantic_files = exported.len() - 1;
+    let refused = root.path().join("too-many-semantic-files");
+    let error = Store::restore_git(archive, &refused, &bounded, &cancel)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("semantic import exceeds configured bound"),
+        "{error}"
+    );
+    assert!(!refused.exists());
+    bounded.limits.semantic_files = exported.len();
     let destination = root.path().join("semantic-restored");
-    let report = Store::restore_git(archive, &destination, &config, &cancel).await?;
+    let report = Store::restore_git(archive, &destination, &bounded, &cancel).await?;
     assert_eq!(report.mode, "git-only");
     assert!(
         report
