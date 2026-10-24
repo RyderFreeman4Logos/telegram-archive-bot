@@ -168,7 +168,11 @@ async fn live_source_admission_and_terminal_failure_have_durable_scoped_feedback
         .query_map([], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     assert_eq!(payloads.len(), 2);
-    assert!(payloads[1].contains("failed") && payloads[1].contains("/retry"));
+    assert!(
+        payloads
+            .iter()
+            .any(|p| p.contains("failed") && p.contains("/retry"))
+    );
     assert_eq!(
         crate::operator::metrics(&store)?["queues"]["jobs"]["failed"],
         1
@@ -608,7 +612,7 @@ async fn doctor_is_offline_and_redacts_tool_output_and_config_values() -> Result
     assert!(!text.contains("SYNTHETIC_SECRET_MUST_NOT_ESCAPE"));
     assert_eq!(report["network_probes_performed"], false);
     assert_eq!(report["telegram_messages_sent"], 0);
-    assert_eq!(report["database_schema"], 10);
+    assert_eq!(report["database_schema"], crate::storage::SCHEMA_VERSION);
     assert!(text.contains("[REDACTED]"));
     Ok(())
 }

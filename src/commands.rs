@@ -440,16 +440,13 @@ mod tests {
             3,
             &format!("/refresh {}", source.job.id),
         )?;
-        // A conflicting immutable logical reply tests rollback after the child was inserted.
-        store.enqueue_deliveries(
-            &refresh,
-            &[Delivery::Text {
-                text: "existing immutable reply".into(),
-            }],
-        )?;
+        // Fail the queue insertion after the refresh child and snapshot were inserted.
+        store.connection()?.execute_batch("CREATE TRIGGER reject_response BEFORE INSERT ON outbox BEGIN SELECT RAISE(ABORT,'fixture queue failure'); END;")?;
         let before = count(&store, "jobs")?;
+        let snapshots = count(&store, "config_snapshots")?;
         assert!(store.execute_command(&refresh).is_err());
         assert_eq!(count(&store, "jobs")?, before);
+        assert_eq!(count(&store, "config_snapshots")?, snapshots);
         assert!(store.phase_outputs(&refresh.job.id)?.is_empty());
         Ok(())
     }

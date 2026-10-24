@@ -211,12 +211,25 @@ impl Delivery {
     }
 }
 pub(crate) fn enqueue_progress_tx(tx: &Transaction<'_>, job_id: &str) -> Result<()> {
-    let id = digest(format!("progress-v1:{job_id}"));
-    let payload = serde_json::to_string(&Delivery::Text {
-        text: format!("Queued.\n/status {job_id}\n/cancel {job_id}"),
-    })?;
-    // A progress notice has no ordering authority over the actual deliverables.
-    tx.execute("INSERT INTO outbox(id,job_id,kind,payload,state,ordinal) VALUES(?1,?2,'text',?3,'pending',-1) ON CONFLICT(id) DO NOTHING", params![id, job_id, payload])?;
+    enqueue_notice_tx(
+        tx,
+        job_id,
+        -1,
+        format!("Queued.\n/status {job_id}\n/cancel {job_id}"),
+    )
+}
+
+pub(crate) fn enqueue_notice_tx(
+    tx: &Transaction<'_>,
+    job_id: &str,
+    ordinal: i64,
+    text: String,
+) -> Result<()> {
+    ensure!(ordinal < 0, "notices require a reserved negative ordinal");
+    let id = digest(format!("notice-v1:{job_id}:{ordinal}"));
+    let payload = serde_json::to_string(&Delivery::Text { text })?;
+    // Informational notices cannot block results, including results after a manual retry.
+    tx.execute("INSERT INTO outbox(id,job_id,kind,payload,state,ordinal) VALUES(?1,?2,'text',?3,'pending',?4) ON CONFLICT(id) DO NOTHING", params![id, job_id, payload, ordinal])?;
     Ok(())
 }
 
@@ -227,7 +240,7 @@ pub(crate) fn enqueue_tx(
 ) -> Result<Vec<String>> {
     let mut ids = vec![];
     let mut ordinal: i64 = tx.query_row(
-        "SELECT COALESCE(MAX(ordinal),-1)+1 FROM outbox WHERE job_id=?1",
+        "SELECT MAX(-1,COALESCE(MAX(ordinal),-1))+1 FROM outbox WHERE job_id=?1",
         [job_id],
         |row| row.get(0),
     )?;

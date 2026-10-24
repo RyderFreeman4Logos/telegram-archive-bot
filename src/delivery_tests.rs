@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     audio::{AudioFinalizer, AudioInput, Repair},
-    jobs::Phase,
+    jobs::{Failure, Phase},
     telegram::Update,
 };
 use std::{
@@ -200,6 +200,38 @@ fn scope() -> Scope {
         chat_id: 2,
         user_id: 3,
     }
+}
+
+#[tokio::test]
+async fn uncertain_failure_notice_cannot_block_a_successfully_retried_result() -> Result<()> {
+    for outcome in ["unknown", "terminal"] {
+        let (root, store, existing) = fixture()?;
+        store.finish_phase(&existing, &json!({}), None, false)?;
+        let mut c = config();
+        c.telegram.enabled = true;
+        let lease = add(&store, &c, 2, "Source to retry")?;
+        store.fail_phase(&lease, Failure::InvalidOutput)?;
+        store.connection()?.execute(
+            "UPDATE outbox SET state=CASE WHEN ordinal=-1 THEN 'confirmed' ELSE ?1 END",
+            [outcome],
+        )?;
+        store.retry_job(scope(), &lease.job.id, Phase::Fetch)?;
+        let retry = store.claim_phase(Phase::Fetch)?.unwrap();
+        store.enqueue_deliveries(&retry, &[document(&store)?])?;
+        store.finish_phase(&retry, &json!({}), None, false)?;
+        let reopened = Store::open(root.path())?;
+        let server = Server::new(vec![]).await?;
+        assert!(
+            server
+                .worker(&reopened, 1)?
+                .send_next(&CancellationToken::new())
+                .await?,
+            "failure feedback must not block a retried final result"
+        );
+        assert_eq!(server.requests.lock().unwrap().len(), 1);
+        assert_eq!(server.requests.lock().unwrap()[0].method, "sendDocument");
+    }
+    Ok(())
 }
 
 #[tokio::test]

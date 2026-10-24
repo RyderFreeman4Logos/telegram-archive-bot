@@ -1,6 +1,6 @@
 # Legacy behavior parity
 
-Project-Spec: rust-telegram-archive-bot-v1  
+Project-Spec: rust-telegram-archive-bot-v1
 Tracking: [#44](https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/44),
 [#45](https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/45)
 

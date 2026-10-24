@@ -124,14 +124,13 @@ fn notify_failure(tx: &Transaction<'_>, job_id: &str, reason: &str) -> Result<()
         [job_id], |row| row.get(0),
     )?;
     if enabled {
-        crate::delivery::enqueue_tx(
+        crate::delivery::enqueue_notice_tx(
             tx,
             job_id,
-            &[crate::delivery::Delivery::Text {
-                text: format!(
-                    "Processing failed ({reason}).\n/status {job_id}\n/retry {job_id}\n/refresh {job_id}"
-                ),
-            }],
+            -2,
+            format!(
+                "Processing failed ({reason}).\n/status {job_id}\n/retry {job_id}\n/refresh {job_id}"
+            ),
         )?;
     }
     Ok(())
