@@ -230,3 +230,66 @@ fn schema_one_upgrade_preserves_existing_content() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn schema_eleven_upgrade_indexes_source_lookups_without_changing_results() -> Result<()> {
+    let dir = temp()?;
+    let store = Store::open(dir.path())?;
+    let complete = fixture("100", "Complete original");
+    store.capture(&complete)?;
+    let mut partial = fixture("100", "Later partial preview");
+    partial.status = FetchStatus::Partial;
+    store.capture(&partial)?;
+    store.capture(&fixture("200", "Unrelated later observation"))?;
+    drop(store);
+    let database = dir.path().join("archive.sqlite");
+    let conn = rusqlite::Connection::open(&database)?;
+    conn.execute_batch("DROP INDEX IF EXISTS observations_source; PRAGMA user_version=11;")?;
+    let queries = [
+        "SELECT status FROM observations WHERE source_id=?1 ORDER BY id DESC LIMIT 1",
+        "SELECT revision_id FROM observations WHERE source_id=?1 AND revision_id IS NOT NULL ORDER BY CASE status WHEN 'complete' THEN 0 ELSE 1 END,id DESC LIMIT 1",
+    ];
+    let identity = complete.identity.id();
+    let before = queries
+        .iter()
+        .map(|query| conn.query_row(query, [&identity], |row| row.get::<_, String>(0)))
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    assert_eq!(before[0], "partial");
+    let preferred: String = conn.query_row(
+        "SELECT current_revision FROM sources WHERE id=?1",
+        [&identity],
+        |row| row.get(0),
+    )?;
+    assert_eq!(before[1], preferred);
+    let observations: String = conn.query_row(
+        "SELECT json_group_array(json_array(id,source_id,revision_id,observed_at,status,extractor,evidence,raw_digest)) FROM (SELECT * FROM observations ORDER BY id)",
+        [],
+        |row| row.get(0),
+    )?;
+    drop(conn);
+    let store = Store::open(dir.path())?;
+    assert_eq!(store.source_counts()?, (2, 2, 3));
+    assert_eq!(store.integrity()?, 0);
+    let conn = rusqlite::Connection::open(&database)?;
+    for (query, expected) in queries.iter().zip(before) {
+        assert_eq!(
+            conn.query_row(query, [&identity], |row| row.get::<_, String>(0))?,
+            expected
+        );
+        let details = conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {query}"))?
+            .query_map([&identity], |row| row.get::<_, String>(3))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        assert!(
+            details
+                .iter()
+                .any(|line| line.contains("SEARCH observations USING INDEX")),
+            "{details:?}"
+        );
+    }
+    assert_eq!(
+        conn.query_row("SELECT json_group_array(json_array(id,source_id,revision_id,observed_at,status,extractor,evidence,raw_digest)) FROM (SELECT * FROM observations ORDER BY id)", [], |row| row.get::<_, String>(0))?,
+        observations
+    );
+    Ok(())
+}
