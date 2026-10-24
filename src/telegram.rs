@@ -209,7 +209,9 @@ pub fn parse_requests(message: &Message, config: &Config) -> Result<Vec<Request>
         }
         for word in body.split_whitespace() {
             let word = word.trim_matches(|c: char| "<>\"".contains(c));
-            if word.starts_with("https://") || word.starts_with("http://") {
+            if word.split_once("://").is_some_and(|(scheme, _)| {
+                scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("http")
+            }) {
                 urls.push(word.into());
             }
         }
@@ -625,6 +627,51 @@ mod tests {
 
     fn update() -> Update {
         serde_json::from_value(json!({"update_id":42,"message":{"message_id":1,"chat":{"id":20},"from":{"id":30},"text":"😀 https://x.com/a/status/123 https://example.org/?s=two","entities":[{"type":"url","offset":3,"length":26}]}})).unwrap()
+    }
+
+    #[test]
+    fn unannotated_http_schemes_are_case_insensitive() -> Result<()> {
+        let config = config();
+        let mut u = update();
+        let message = u.message.as_mut().unwrap();
+        message.entities.clear();
+        for url in [
+            "HTTP://example.org/Case?A=B#Fragment",
+            "hTtPs://example.net/Route",
+        ] {
+            for caption in [false, true] {
+                message.text = (!caption).then(|| url.into());
+                message.caption = caption.then(|| url.into());
+                let requests = parse_requests(message, &config)?;
+                assert_eq!(requests.len(), 1);
+                assert!(
+                    matches!(&requests[0], Request::Url { url: submitted } if submitted == url)
+                );
+            }
+        }
+        message.caption = None;
+        message.text = Some("HTTPS://example.org/Original".into());
+        message.reply_to_message = Some(Box::new(message.clone()));
+        message.text = Some("/tts".into());
+        assert!(
+            matches!(&parse_requests(message, &config)?[0], Request::Transform { source, .. }
+            if matches!(source.as_ref(), Request::Url { url } if url == "HTTPS://example.org/Original"))
+        );
+        message.reply_to_message = None;
+        for text in [
+            "ordinary text",
+            "HTTPX://example.org/",
+            "HTTPSx://example.org/",
+        ] {
+            message.text = Some(text.into());
+            assert!(matches!(
+                &parse_requests(message, &config)?[0],
+                Request::Text { .. }
+            ));
+        }
+        message.text = Some("HTTP://[".into());
+        assert!(parse_requests(message, &config).is_err());
+        Ok(())
     }
 
     #[test]
