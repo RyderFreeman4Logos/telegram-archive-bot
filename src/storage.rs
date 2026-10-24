@@ -7,6 +7,7 @@ use std::{
     io::{Read, Write},
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -15,6 +16,35 @@ pub const SCHEMA_VERSION: u32 = 11;
 #[derive(Clone, Debug)]
 pub struct Store {
     root: PathBuf,
+    idle: Arc<Mutex<Vec<Connection>>>,
+}
+
+pub(crate) struct StoreConnection {
+    connection: Option<Connection>,
+    idle: Arc<Mutex<Vec<Connection>>>,
+}
+
+impl std::ops::Deref for StoreConnection {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        self.connection.as_ref().expect("live database connection")
+    }
+}
+impl std::ops::DerefMut for StoreConnection {
+    fn deref_mut(&mut self) -> &mut Connection {
+        self.connection.as_mut().expect("live database connection")
+    }
+}
+impl Drop for StoreConnection {
+    fn drop(&mut self) {
+        if let Some(connection) = self.connection.take()
+            && connection.is_autocommit()
+            && let Ok(mut idle) = self.idle.lock()
+            && idle.len() < 8
+        {
+            idle.push(connection);
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +107,7 @@ impl Store {
         private_dir(root)?;
         let store = Self {
             root: root.canonicalize()?,
+            idle: Arc::default(),
         };
         for dir in ["blobs", "staging", "work"] {
             private_dir(&store.root.join(dir))?;
@@ -132,7 +163,23 @@ impl Store {
         &self.root
     }
 
-    pub(crate) fn connection(&self) -> Result<Connection> {
+    pub(crate) fn connection(&self) -> Result<StoreConnection> {
+        let cached = self
+            .idle
+            .lock()
+            .map_err(|_| anyhow::anyhow!("database connection pool poisoned"))?
+            .pop();
+        let connection = match cached {
+            Some(connection) => connection,
+            None => self.open_connection()?,
+        };
+        Ok(StoreConnection {
+            connection: Some(connection),
+            idle: self.idle.clone(),
+        })
+    }
+
+    fn open_connection(&self) -> Result<Connection> {
         let path = self.root.join("archive.sqlite");
         if path.symlink_metadata().is_ok() {
             regular_file(&path)?;
@@ -338,6 +385,47 @@ mod tests {
     use crate::digest;
     use anyhow::bail;
     use std::sync::{Arc, Barrier};
+
+    #[test]
+    fn idle_store_keeps_wal_open_without_retaining_abandoned_transactions() -> Result<()> {
+        let temp = tempfile::Builder::new()
+            .permissions(fs::Permissions::from_mode(0o700))
+            .tempdir()?;
+        let store = Store::open(temp.path())?;
+        let blob = store.publish_bytes(b"Durable original")?;
+        let wal = temp.path().join("archive.sqlite-wal");
+        assert!(
+            wal.exists(),
+            "idle operations must not repeatedly checkpoint and delete the WAL"
+        );
+        {
+            let conn = store.connection()?;
+            conn.execute_batch("BEGIN IMMEDIATE; INSERT INTO polling_cursors VALUES(99,123);")?;
+            // An abandoned raw transaction must be closed, not handed to another worker.
+        }
+        let cloned = store.clone();
+        let conn = cloned.connection()?;
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM polling_cursors", [], |r| r
+                .get::<_, u64>(0))?,
+            0
+        );
+        assert_eq!(
+            conn.pragma_query_value(None, "synchronous", |r| r.get::<_, u32>(0))?,
+            2
+        );
+        assert_eq!(
+            conn.pragma_query_value(None, "foreign_keys", |r| r.get::<_, u32>(0))?,
+            1
+        );
+        drop(conn);
+        drop(store);
+        assert_eq!(cloned.read_blob(&blob.digest, 100)?, b"Durable original");
+        drop(cloned);
+        let reopened = Store::open(temp.path())?;
+        assert_eq!(reopened.integrity()?, 1);
+        Ok(())
+    }
 
     #[test]
     fn migrations_constraints_and_concurrent_publication() -> Result<()> {

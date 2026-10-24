@@ -465,7 +465,8 @@ impl Store {
     }
 
     pub fn job_for(&self, scope: Scope, id: &str) -> Result<Job> {
-        let job = load_job(&self.connection()?, id)?;
+        let conn = self.connection()?;
+        let job = load_job(&conn, id)?;
         ensure!(
             (job.bot_id, job.chat_id, job.user_id) == (scope.bot_id, scope.chat_id, scope.user_id),
             "job unavailable in this scope"
