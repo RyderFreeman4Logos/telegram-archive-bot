@@ -43,3 +43,36 @@ Private durable receipts are retained under
 `/var/tmp/archive-storage-performance-20261024/{reply_baseline,pooled}/receipt.json`.
 An earlier RC1 control also passed (65.191 seconds), but it predates reply-command
 changes and is not the isolated connection-reuse control used in the table.
+
+## Source observation lookup cost
+
+[Issue #61](https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/61)
+covers a separate large-archive lookup. The completed primary corpus has 18,347
+sources and 43,523 observations. The existing SQLite plans scan all observations
+for both a source's latest status and its preferred revision during Git restore.
+Schema 12 adds one index on `observations(source_id)`. The capture quality lookup
+also supplies its already-known source ID, preserving revision ownership and
+the preference for complete content. Stored observations and originals do not
+change; FULL synchronization and foreign-key checks remain enabled.
+
+A bounded control copied those observation columns into an isolated in-memory
+SQLite database and executed the exact status/restore lookup SQL for 800 sources.
+
+| Lookup | Without index, seconds | With index, seconds |
+| --- | ---: | ---: |
+| Latest source status | 0.435 | 0.00146 |
+| Preferred restore revision | 1.095 | 0.00298 |
+
+Both result hashes are identical. Index creation took 0.0192 seconds in this
+control. These measurements isolate query work; they do not measure disk writes,
+public-command latency or complete Git restoration. Receipt SHA256:
+`ba2064adba2012d1637005054d6a970926b0ba4766e82ca988f807afe514349e`.
+
+The migration regression retains a schema-11 fixture with complete and later
+partial evidence. It checks unchanged observation rows, preferred revision,
+latest status and integrity, and indexed searches for both lookup shapes.
+Its pre-change failure reaches the access-plan assertion (`SCAN observations`).
+An earlier incorrect fixture count was corrected separately and is not counted
+as a product failure. Installed migration, index storage cost and full-corpus
+recovery require their own receipts. After opening schema 12, rolling back to a
+schema-11 executable requires restoring a verified pre-upgrade backup.

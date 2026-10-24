@@ -261,8 +261,8 @@ impl Store {
             |r| r.get(0),
         )?;
         let complete = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM observations WHERE revision_id=?1 AND status='complete')",
-            [&previous],
+            "SELECT EXISTS(SELECT 1 FROM observations WHERE source_id=?1 AND revision_id=?2 AND status='complete')",
+            params![source, previous],
             |r| r.get::<_, bool>(0),
         )?;
         let mut resulting = None;
