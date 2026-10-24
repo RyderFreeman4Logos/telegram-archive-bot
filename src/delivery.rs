@@ -67,6 +67,7 @@ struct Attempt {
     outbox_id: String,
     bot_id: i64,
     chat_id: i64,
+    reply_to: Option<i64>,
     number: u32,
     config: Config,
     cached_file_id: Option<String>,
@@ -209,12 +210,27 @@ impl Delivery {
         }
     }
 }
+pub(crate) fn enqueue_progress_tx(tx: &Transaction<'_>, job_id: &str) -> Result<()> {
+    let id = digest(format!("progress-v1:{job_id}"));
+    let payload = serde_json::to_string(&Delivery::Text {
+        text: format!("Queued.\n/status {job_id}\n/cancel {job_id}"),
+    })?;
+    // A progress notice has no ordering authority over the actual deliverables.
+    tx.execute("INSERT INTO outbox(id,job_id,kind,payload,state,ordinal) VALUES(?1,?2,'text',?3,'pending',-1) ON CONFLICT(id) DO NOTHING", params![id, job_id, payload])?;
+    Ok(())
+}
+
 pub(crate) fn enqueue_tx(
     tx: &Transaction<'_>,
     job_id: &str,
     deliveries: &[Delivery],
 ) -> Result<Vec<String>> {
     let mut ids = vec![];
+    let mut ordinal: i64 = tx.query_row(
+        "SELECT COALESCE(MAX(ordinal),-1)+1 FROM outbox WHERE job_id=?1",
+        [job_id],
+        |row| row.get(0),
+    )?;
     for (order, payload) in deliveries.iter().enumerate() {
         let value = serde_json::to_string(payload)?;
         let id = digest(format!("delivery-v1:{job_id}:{order}:{value}"));
@@ -223,7 +239,7 @@ pub(crate) fn enqueue_tx(
             Delivery::Document { .. } => "document",
             Delivery::Text { .. } => "text",
         };
-        tx.execute("INSERT INTO outbox(id,job_id,kind,payload,state,ordinal) VALUES(?1,?2,?3,?4,'pending',?5) ON CONFLICT(id) DO NOTHING",params![id,job_id,kind,value,order])?;
+        ordinal += tx.execute("INSERT INTO outbox(id,job_id,kind,payload,state,ordinal) VALUES(?1,?2,?3,?4,'pending',?5) ON CONFLICT(id) DO NOTHING",params![id,job_id,kind,value,ordinal])? as i64;
         ids.push(id);
     }
     Ok(ids)
@@ -325,8 +341,8 @@ impl Store {
         let time = now();
         tx.execute("UPDATE delivery_attempts SET state='unknown',finished_at=?1,error='worker_lost' WHERE state='sending' AND outbox_id IN (SELECT id FROM outbox WHERE state='sending' AND (lease_until IS NULL OR lease_until<=?1))",[time])?;
         tx.execute("UPDATE outbox SET state='unknown',error='worker_lost',lease_until=NULL WHERE state='sending' AND (lease_until IS NULL OR lease_until<=?1)",[time])?;
-        let row=tx.query_row("SELECT o.id,o.job_id,o.attempt,o.payload,c.config,i.chat_id FROM outbox o JOIN jobs j ON j.id=o.job_id JOIN inbox i ON i.bot_id=j.bot_id AND i.update_id=j.update_id JOIN config_snapshots c ON c.id=j.config_id WHERE j.bot_id=?1 AND COALESCE((SELECT until FROM telegram_cooldowns WHERE bot_id=?1),0)<=?2 AND o.state IN ('pending','retryable') AND o.available_at<=?2 AND NOT EXISTS(SELECT 1 FROM outbox earlier WHERE earlier.job_id=o.job_id AND earlier.ordinal<o.ordinal AND earlier.state!='confirmed') ORDER BY o.rowid LIMIT 1",params![bot,time],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,u32>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,i64>(5)?))).optional()?;
-        let Some((outbox_id, _job_id, number, payload, config, chat_id)) = row else {
+        let row=tx.query_row("SELECT o.id,o.job_id,o.attempt,o.payload,c.config,i.chat_id,(SELECT message_id FROM message_origins m WHERE m.bot_id=j.bot_id AND m.update_id=j.update_id) FROM outbox o JOIN jobs j ON j.id=o.job_id JOIN inbox i ON i.bot_id=j.bot_id AND i.update_id=j.update_id JOIN config_snapshots c ON c.id=j.config_id WHERE j.bot_id=?1 AND COALESCE((SELECT until FROM telegram_cooldowns WHERE bot_id=?1),0)<=?2 AND o.state IN ('pending','retryable') AND o.available_at<=?2 AND NOT EXISTS(SELECT 1 FROM outbox earlier WHERE earlier.job_id=o.job_id AND earlier.ordinal>=0 AND earlier.ordinal<o.ordinal AND earlier.state!='confirmed') ORDER BY o.rowid LIMIT 1",params![bot,time],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,u32>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,i64>(5)?,r.get::<_,Option<i64>>(6)?))).optional()?;
+        let Some((outbox_id, _job_id, number, payload, config, chat_id, reply_to)) = row else {
             tx.commit()?;
             return Ok(None);
         };
@@ -344,7 +360,7 @@ impl Store {
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let time = now();
-        let eligible = tx.query_row("SELECT EXISTS(SELECT 1 FROM outbox o WHERE o.id=?1 AND o.attempt=?2 AND o.state IN ('pending','retryable') AND o.available_at<=?3 AND COALESCE((SELECT until FROM telegram_cooldowns WHERE bot_id=?4),0)<=?3 AND NOT EXISTS(SELECT 1 FROM outbox earlier WHERE earlier.job_id=o.job_id AND earlier.ordinal<o.ordinal AND earlier.state!='confirmed'))",params![outbox_id,number,time,bot],|r|r.get::<_,bool>(0))?;
+        let eligible = tx.query_row("SELECT EXISTS(SELECT 1 FROM outbox o WHERE o.id=?1 AND o.attempt=?2 AND o.state IN ('pending','retryable') AND o.available_at<=?3 AND COALESCE((SELECT until FROM telegram_cooldowns WHERE bot_id=?4),0)<=?3 AND NOT EXISTS(SELECT 1 FROM outbox earlier WHERE earlier.job_id=o.job_id AND earlier.ordinal>=0 AND earlier.ordinal<o.ordinal AND earlier.state!='confirmed'))",params![outbox_id,number,time,bot],|r|r.get::<_,bool>(0))?;
         if !eligible {
             tx.commit()?;
             return Ok(None);
@@ -377,6 +393,7 @@ impl Store {
             outbox_id,
             bot_id: bot,
             chat_id,
+            reply_to,
             number,
             config,
             cached_file_id,
@@ -460,6 +477,10 @@ impl DeliveryWorker {
         let endpoint = self.telegram.endpoint(p.method);
         let mut fields = p.fields.clone();
         fields["chat_id"] = json!(a.chat_id);
+        if let Some(message_id) = a.reply_to {
+            fields["reply_parameters"] =
+                json!({"message_id":message_id,"allow_sending_without_reply":true});
+        }
         let request = if let Some(blob) = &p.blob
             && a.cached_file_id.is_none()
         {

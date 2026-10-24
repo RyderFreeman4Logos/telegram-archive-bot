@@ -8,7 +8,7 @@ use crate::{
     network::PublicHttp,
     sources::{Capture, Content, ContentMetadata, FetchStatus, Identity, ViewPolicy},
     storage::{Store, now},
-    telegram::{Request, Telegram, Update},
+    telegram::{Operation, Request, Telegram, Update},
     transforms::{AudioSet, DownloadRequest, NarrationRequest},
     translation::{HymtTranslator, TranslationManifest, TranslationWorkflow},
     workflows::{MetadataManifest, MetadataWorkflow, configured_model},
@@ -157,6 +157,7 @@ fn media_url(url: &str) -> bool {
                 "soundcloud.com",
                 "bilibili.com",
                 "b23.tv",
+                "xiaoyuzhoufm.com",
             ]
             .iter()
             .any(|d| h == *d || h.ends_with(&format!(".{d}")))
@@ -182,12 +183,27 @@ async fn fetch(
     relay: &Path,
     cancel: &CancellationToken,
 ) -> Result<()> {
+    if let Request::Transform { operation, source } = &lease.job.request {
+        ensure!(
+            match operation {
+                Operation::Translate => lease.config.translation.enabled,
+                Operation::Tts => lease.config.synthesis.enabled,
+                Operation::Summarize => lease.config.model.enabled,
+            },
+            Failure::ToolMissing
+        );
+        ensure!(
+            !matches!(source.as_ref(), Request::Url { url } if media_url(url)),
+            Failure::InvalidInput
+        );
+    }
     let docs = Documents {
         store: store.clone(),
         config: lease.config.clone(),
         http: PublicHttp::default(),
     };
-    match &lease.job.request {
+    match lease.job.request.source() {
+        Request::Transform { .. } => anyhow::bail!(Failure::InvalidInput),
         Request::Command { .. } => {
             store.execute_command(lease)?;
         }
@@ -329,7 +345,7 @@ async fn execute(
         Phase::Download => {
             let mut artifacts = vec![];
             let mut candidates = vec![];
-            if let Request::Url { url } = &lease.job.request
+            if let Request::Url { url } = lease.job.request.source()
                 && lease.config.sources.media_enabled
                 && media_url(url)
             {
@@ -366,7 +382,7 @@ async fn execute(
         Phase::Synthesize => {
             let mut sets = vec![];
             if lease.config.synthesis.enabled
-                && !matches!(&lease.job.request,Request::Url{url} if lease.config.sources.media_enabled&&media_url(url))
+                && !matches!(lease.job.request.source(),Request::Url{url} if lease.config.sources.media_enabled&&media_url(url))
             {
                 let outputs = store.phase_outputs(&lease.job.id)?;
                 let translated = outputs
@@ -414,6 +430,10 @@ async fn execute(
         Phase::Finalize => {
             let outputs = store.phase_outputs(&lease.job.id)?;
             let pinned = view(store, lease)?;
+            let operation = match lease.job.request {
+                Request::Transform { operation, .. } => Some(operation),
+                _ => None,
+            };
             let mut text = String::new();
             let mut title = "Archive".to_owned();
             for member in &pinned.members {
@@ -427,14 +447,17 @@ async fn execute(
                     text.push_str(&format!("Unavailable source: {}\n\n", member.source_id));
                 }
             }
+            let mut summary = String::new();
             if let Some(hash) = outputs
                 .get("metadata")
                 .and_then(|o| o["metadata_digest"].as_str())
             {
                 let m: MetadataManifest = manifest(store, hash, lease)?;
                 title = m.result.title.clone();
-                text = format!("# {}\n\n{}\n\n{}", m.result.title, m.result.summary, text);
+                summary = format!("# {}\n\n{}\n", m.result.title, m.result.summary);
+                text = format!("{summary}\n{text}");
             }
+            let mut translation = String::new();
             if let Some(hashes) = outputs
                 .get("translate")
                 .and_then(|o| o["translations"].as_array())
@@ -444,13 +467,25 @@ async fn execute(
                         manifest(store, hash.as_str().ok_or(Failure::InvalidOutput)?, lease)?;
                     let bytes =
                         store.read_blob(&m.output_digest, lease.config.limits.input_bytes)?;
-                    text.push_str("\n# Translation\n\n");
-                    text.push_str(std::str::from_utf8(&bytes)?);
+                    translation.push_str(std::str::from_utf8(&bytes)?);
+                    translation.push_str("\n\n");
                 }
             }
             let mut deliveries = vec![];
             let mut artifacts = vec![];
-            if !text.is_empty() {
+            let mut documents = vec![];
+            if operation.is_none() && !text.is_empty() {
+                documents.push((text, "", "Archived original"));
+            }
+            if (operation.is_none() || operation == Some(Operation::Translate))
+                && !translation.is_empty()
+            {
+                documents.push((translation, "-translation", "Translation"));
+            }
+            if operation == Some(Operation::Summarize) && !summary.is_empty() {
+                documents.push((summary, "-summary", "Generated summary"));
+            }
+            for (text, suffix, caption) in documents {
                 ensure!(
                     text.len() as u64 <= lease.config.limits.input_bytes,
                     Failure::InvalidOutput
@@ -459,19 +494,19 @@ async fn execute(
                 deliveries.push(Delivery::Document {
                     blob_digest: blob.digest,
                     name: format!(
-                        "{}.md",
+                        "{}{suffix}.md",
                         crate::documents::display_name(&title)
                             .chars()
                             .take(45)
                             .collect::<String>()
                     ),
                     mime: "text/markdown".into(),
-                    caption:
-                        "Pinned source view; generated text does not establish semantic fidelity."
-                            .into(),
+                    caption: caption.into(),
                 });
             }
-            if let Some(original) = outputs["fetch"].get("original") {
+            if operation.is_none()
+                && let Some(original) = outputs["fetch"].get("original")
+            {
                 let original: crate::documents::Original =
                     serde_json::from_value(original.clone())?;
                 if original.mime == "application/pdf" && original.validated {
@@ -503,6 +538,7 @@ async fn execute(
                 deliveries.push(Delivery::Audio{artifact_id:id.clone(),title:"Archived audio".into(),performer:"Telegram Archive".into(),caption:"Validated audio; original content completeness is not independently verified.".into()});
             }
             if deliveries.is_empty() {
+                ensure!(operation.is_none(), Failure::InvalidOutput);
                 deliveries.push(Delivery::Text {
                     text: "Source unavailable; retained a partial observation.".into(),
                 });

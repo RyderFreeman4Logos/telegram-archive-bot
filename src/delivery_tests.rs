@@ -201,6 +201,96 @@ fn scope() -> Scope {
         user_id: 3,
     }
 }
+
+#[tokio::test]
+async fn uncertain_progress_notice_does_not_block_final_output() -> Result<()> {
+    let (_root, store, lease) = fixture()?;
+    store.connection()?.execute(
+        "INSERT INTO outbox(id,job_id,kind,payload,state,ordinal) VALUES('notice',?1,'text',?2,'unknown',-1)",
+        params![lease.job.id, serde_json::to_string(&Delivery::Text { text: "Queued".into() })?],
+    )?;
+    store.enqueue_deliveries(&lease, &[document(&store)?])?;
+    let server = Server::new(vec![]).await?;
+    assert!(
+        server
+            .worker(&store, 1)?
+            .send_next(&CancellationToken::new())
+            .await?,
+        "uncertain progress feedback must not prevent delivery of the result"
+    );
+    assert_eq!(server.requests.lock().unwrap()[0].method, "sendDocument");
+    Ok(())
+}
+
+#[test]
+fn later_delivery_groups_append_after_feedback_and_stay_idempotent() -> Result<()> {
+    let (_root, store, lease) = fixture()?;
+    let feedback = [Delivery::Text {
+        text: "Queued".into(),
+    }];
+    let notice = store.enqueue_deliveries(&lease, &feedback)?;
+    let outputs = [
+        document(&store)?,
+        Delivery::Text {
+            text: "Complete".into(),
+        },
+    ];
+    let result = store.enqueue_deliveries(&lease, &outputs);
+    assert!(
+        result.is_ok(),
+        "final outputs must append after progress feedback"
+    );
+    let ids = result?;
+    assert_eq!(ids, store.enqueue_deliveries(&lease, &outputs)?);
+    assert_eq!(notice, store.enqueue_deliveries(&lease, &feedback)?);
+    let rows: Vec<(String, i64)> = store
+        .connection()?
+        .prepare("SELECT id,ordinal FROM outbox ORDER BY ordinal")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    assert_eq!(
+        rows,
+        vec![
+            (notice[0].clone(), 0),
+            (ids[0].clone(), 1),
+            (ids[1].clone(), 2)
+        ]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn deliveries_reply_to_persisted_message_not_update_id_after_reopen() -> Result<()> {
+    let (_root, store, _) = fixture()?;
+    let incoming: Update = serde_json::from_value(json!({
+        "update_id": 44,
+        "message": {"message_id": 314, "chat": {"id": 2}, "from": {"id": 3}, "text": "Reply source"}
+    }))?;
+    store.ingest(&config(), &incoming, &json!({}))?;
+    let lease = store.claim_phase(Phase::Fetch)?.unwrap();
+    let deliveries = [
+        Delivery::Text {
+            text: "Complete".into(),
+        },
+        document(&store)?,
+    ];
+    store.enqueue_deliveries(&lease, &deliveries)?;
+    let reopened = Store::open(store.root())?;
+    let server = Server::new(vec![]).await?;
+    let worker = server.worker(&reopened, 1)?;
+    for _ in &deliveries {
+        assert!(worker.send_next(&CancellationToken::new()).await?);
+    }
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(
+        requests[0].json.as_ref().unwrap()["reply_parameters"],
+        json!({"message_id": 314, "allow_sending_without_reply": true})
+    );
+    let multipart = String::from_utf8_lossy(&requests[1].body);
+    assert!(multipart.contains("name=\"reply_parameters\""));
+    assert!(multipart.contains("\"message_id\":314"));
+    Ok(())
+}
 fn document(store: &Store) -> Result<Delivery> {
     Ok(Delivery::Document {
         blob_digest: store.publish_bytes("# Synthetic\n全文".as_bytes())?.digest,

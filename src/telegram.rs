@@ -31,6 +31,7 @@ pub struct Message {
     #[serde(default)]
     pub caption_entities: Vec<Entity>,
     pub document: Option<Document>,
+    pub reply_to_message: Option<Box<Message>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -53,6 +54,10 @@ pub struct Document {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Request {
+    Transform {
+        operation: Operation,
+        source: Box<Request>,
+    },
     Url {
         url: String,
     },
@@ -69,6 +74,33 @@ pub enum Request {
         name: String,
         argument: String,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Operation {
+    Translate,
+    Tts,
+    Summarize,
+}
+
+impl Request {
+    pub fn source(&self) -> &Self {
+        match self {
+            Self::Transform { source, .. } => source,
+            _ => self,
+        }
+    }
+
+    pub(crate) fn job_config(&self, config: &Config) -> Config {
+        let mut selected = config.clone();
+        if let Self::Transform { operation, .. } = self {
+            selected.model.enabled &= *operation == Operation::Summarize;
+            selected.translation.enabled &= *operation == Operation::Translate;
+            selected.synthesis.enabled &= *operation == Operation::Tts;
+        }
+        selected
+    }
 }
 
 // Telegram entity offsets count UTF-16 code units, not UTF-8 bytes or characters.
@@ -96,6 +128,53 @@ pub fn parse_requests(message: &Message, config: &Config) -> Result<Vec<Request>
             .split('@')
             .next()
             .unwrap_or("");
+        let operation = match name {
+            "translate" => Some(Operation::Translate),
+            "tts" => Some(Operation::Tts),
+            "summarize" => Some(Operation::Summarize),
+            _ => None,
+        };
+        if let Some(operation) = operation {
+            let mut source = if let Some(reply) = &message.reply_to_message {
+                ensure!(
+                    reply.chat.id == message.chat.id,
+                    "reply belongs to another chat"
+                );
+                ensure!(
+                    argument.trim().is_empty(),
+                    "reply commands take no inline input"
+                );
+                (**reply).clone()
+            } else {
+                ensure!(
+                    !argument.trim().is_empty(),
+                    "reply to a source or provide inline input"
+                );
+                let mut source = message.clone();
+                source.text = Some(argument.trim().to_owned());
+                source.entities.clear();
+                source
+            };
+            source.reply_to_message = None;
+            if source.document.is_some() {
+                source.text = None;
+                source.caption = None;
+                source.entities.clear();
+                source.caption_entities.clear();
+            }
+            ensure!(
+                !source.text.as_deref().unwrap_or("").starts_with('/'),
+                "a command is not source text"
+            );
+            return Ok(parse_requests(&source, config)?
+                .into_iter()
+                .map(|source| Request::Transform {
+                    operation,
+                    source: Box::new(source),
+                })
+                .collect());
+        }
+        let name = if name == "start" { "help" } else { name };
         ensure!(
             [
                 "help", "status", "cancel", "retry", "get", "refresh", "resend"
@@ -230,6 +309,15 @@ impl Store {
         } else {
             None
         };
+        let invalid = authorized && parsed.is_none();
+        let parsed = parsed.or_else(|| {
+            (invalid && config.telegram.enabled).then(|| {
+                vec![Request::Command {
+                    name: "_invalid_input".into(),
+                    argument: String::new(),
+                }]
+            })
+        });
         let reason = if !authorized {
             "unauthorized_or_unsupported"
         } else {
@@ -242,13 +330,7 @@ impl Store {
             Ingress::Replayed
         } else if let Some(requests) = parsed {
             let m = message.unwrap();
-            let config_json = serde_json::to_string(config)?;
             let tools = serde_json::to_string(tool_versions)?;
-            let config_id = digest(format!("{config_json}\n{tools}"));
-            tx.execute(
-                "INSERT INTO config_snapshots VALUES(?1,?2,?3) ON CONFLICT DO NOTHING",
-                params![config_id, config_json, tools],
-            )?;
             // Retain bounded normalized requests instead of the full provider payload.
             tx.execute(
                 "INSERT INTO inbox VALUES(?1,?2,?3,?4,?5)",
@@ -260,11 +342,34 @@ impl Store {
                     serde_json::to_string(&requests)?
                 ],
             )?;
+            if m.message_id > 0 {
+                tx.execute(
+                    "INSERT INTO message_origins VALUES(?1,?2,?3)",
+                    params![bot, update.update_id, m.message_id],
+                )?;
+            }
             for (ordinal, request) in requests.iter().enumerate() {
+                let config_json = serde_json::to_string(&request.job_config(config))?;
+                let config_id = digest(format!("{config_json}\n{tools}"));
+                tx.execute(
+                    "INSERT INTO config_snapshots VALUES(?1,?2,?3) ON CONFLICT DO NOTHING",
+                    params![config_id, config_json, tools],
+                )?;
                 let id = digest(format!("{bot}:{}:{ordinal}", update.update_id));
                 tx.execute("INSERT INTO jobs(id,bot_id,update_id,ordinal,request,config_id,state) VALUES(?1,?2,?3,?4,?5,?6,'queued')",params![id,bot,update.update_id,ordinal,serde_json::to_string(request)?,config_id])?;
+                if config.telegram.enabled && !matches!(request, Request::Command { .. }) {
+                    crate::delivery::enqueue_progress_tx(&tx, &id)?;
+                }
             }
-            Ingress::Scheduled(requests.len())
+            if invalid {
+                tx.execute(
+                    "INSERT INTO ingress_rejections VALUES(?1,?2,?3)",
+                    params![bot, update.update_id, reason],
+                )?;
+                Ingress::Rejected(reason)
+            } else {
+                Ingress::Scheduled(requests.len())
+            }
         } else {
             tx.execute(
                 "INSERT INTO ingress_rejections VALUES(?1,?2,?3)",
