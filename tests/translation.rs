@@ -789,6 +789,11 @@ shutil.copyfile(Path(__file__).with_suffix('.mp3'),a[a.index('--output')+1])
             telegram_archive_bot::jobs::JobState::Complete
         );
         let outputs = store.phase_outputs(job)?;
+        assert_eq!(
+            outputs["finalize"]["deliveries"].as_array().unwrap().len(),
+            4,
+            "each view delivers original and translated documents plus two audio items"
+        );
         let view = store.view(outputs["fetch"]["view_id"].as_str().unwrap())?;
         assert!(
             view.members
@@ -809,7 +814,7 @@ shutil.copyfile(Path(__file__).with_suffix('.mp3'),a[a.index('--output')+1])
         3
     );
     let before = telegram_archive_bot::operator::metrics(&store)?;
-    assert_eq!(before["queues"]["outbox"]["pending"], 6);
+    assert_eq!(before["queues"]["outbox"]["pending"], 8);
     assert_eq!(before["job_retries"], 0);
     drop(store);
     let restarted = Store::open(&config.state_dir)?;
@@ -829,7 +834,7 @@ shutil.copyfile(Path(__file__).with_suffix('.mp3'),a[a.index('--output')+1])
     assert!(restored.recovery_paused()?);
     assert_eq!(
         telegram_archive_bot::operator::metrics(&restored)?["queues"]["outbox"]["paused"],
-        6
+        8
     );
     restored.integrity()?;
     Ok(())
