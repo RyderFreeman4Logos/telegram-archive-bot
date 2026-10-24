@@ -107,6 +107,58 @@ fn post(id: &str, body: &str, relations: Vec<(&str, RelationKind)>) -> Post {
         raw: format!("{{\"id\":\"{id}\"}}").into_bytes(),
     }
 }
+
+#[tokio::test]
+async fn article_admission_uses_actual_provider_payloads_and_x_url_identity() -> Result<()> {
+    for (body, needed) in [
+        ("An /article/ path is ordinary prose.", false),
+        ("Read https://example.org/article/42 for details.", false),
+        ("https://x.com.invalid/i/article/123", false),
+        (
+            "https://example.org/?next=https://x.com/i/article/123",
+            false,
+        ),
+        ("https://x.com@example.org/i/article/123", false),
+        ("https://x.com/i/article/not-a-number", false),
+        ("https://x.com/i/article/123/other", false),
+        ("See https://x.com/i/article/123", true),
+        ("<https://twitter.com/i/article/123>", true),
+    ] {
+        for preview in [
+            parse_fx("100", &json!({"tweet":{"id":"100","text":body}}))?,
+            parse_official("100", &json!({"data":{"id":"100","text":body}}))?,
+        ] {
+            assert_eq!(
+                preview.status,
+                if needed {
+                    FetchStatus::Partial
+                } else {
+                    FetchStatus::Complete
+                },
+                "{body}"
+            );
+            let (_dir, store) = store()?;
+            let primary = fake(vec![preview]);
+            let mut guest = fake(vec![post("100", "Hydrated body", vec![])]);
+            Arc::get_mut(&mut guest).unwrap().name = "guest-only";
+            XGraph::new(vec![primary, guest.clone()])
+                .traverse(
+                    &store,
+                    "https://x.com/i/status/100",
+                    &Config::default(),
+                    false,
+                    &CancellationToken::new(),
+                )
+                .await?;
+            assert_eq!(
+                guest.calls.lock().unwrap().get("100").copied().unwrap_or(0),
+                u32::from(needed),
+                "{body}"
+            );
+        }
+    }
+    Ok(())
+}
 fn fake(posts: Vec<Post>) -> Arc<Fake> {
     Arc::new(Fake {
         name: "synthetic-v1",

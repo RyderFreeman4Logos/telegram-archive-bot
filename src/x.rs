@@ -145,6 +145,20 @@ impl Provider for FxEmbed {
 fn text(value: &Value, key: &str) -> Option<String> {
     value.get(key).and_then(Value::as_str).map(str::to_owned)
 }
+fn article_link(body: &str) -> bool {
+    body.split(|c: char| c.is_whitespace() || "<>\"'()[]".contains(c))
+        .filter_map(|word| url::Url::parse(word).ok())
+        .any(|url| {
+            matches!(url.scheme(), "http" | "https")
+                && url.username().is_empty()
+                && url.password().is_none()
+                && matches!(url.host_str(), Some("x.com" | "www.x.com" | "mobile.x.com" | "twitter.com" | "www.twitter.com" | "mobile.twitter.com" | "m.twitter.com"))
+                && url.path_segments().is_some_and(|parts| {
+                    let parts = parts.collect::<Vec<_>>();
+                    matches!(parts.as_slice(), ["i", "article", id] | ["i", "article", id, ""] if Identity::x(id).is_ok())
+                })
+        })
+}
 fn related(id: &str, kind: RelationKind) -> Result<Related, Failure> {
     Ok(Related {
         target: Identity::x(id).map_err(|_| Failure::InvalidOutput)?,
@@ -188,7 +202,7 @@ pub fn parse_official(id: &str, payload: &Value) -> Result<Post, Failure> {
         .as_array()
         .and_then(|users| users.iter().find(|u| u["id"] == data["author_id"]))
         .and_then(|u| text(u, "name"));
-    let article_link = body.contains("/article/") || !data["article"].is_null();
+    let article_link = article_link(body) || data["article"].is_object();
     Ok(Post {
         id: id.into(),
         content: Some(Content {
@@ -268,7 +282,7 @@ pub fn parse_fx(id: &str, payload: &Value) -> Result<Post, Failure> {
     let mut limitations = vec![];
     let mut article_hydrated = false;
     let article = &data["article"];
-    if !article.is_null() {
+    if article.is_object() {
         title = text(article, "title");
         if let Some(blocks) = article["content"]["blocks"]
             .as_array()
@@ -321,7 +335,7 @@ pub fn parse_fx(id: &str, payload: &Value) -> Result<Post, Failure> {
             }
         }
     }
-    if (!article.is_null() || body.contains("/article/")) && !article_hydrated {
+    if (article.is_object() || article_link(&body)) && !article_hydrated {
         status = FetchStatus::Partial;
         if !limitations.contains(&"article_preview_only") {
             limitations.push("article_preview_only");
