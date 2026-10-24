@@ -10,30 +10,30 @@ on the read-only legacy source with SHA256
 No legacy source, private archive, credentials or Git history is imported.
 An implemented path is not evidence that every live source can be recovered.
 
-| Legacy behavior / entry | Rust path | Remaining acceptance |
+| Legacy behavior / entry | Rust path | Evidence and limits |
 | --- | --- | --- |
-| Multiple submitted URLs, `process_url` | `telegram::parse_requests`, durable child jobs | Full corpus replay |
-| Web article extraction, `scrape_with_trafilatura` | `Documents`, Readability + HTML-to-Markdown with marked fallback | Compare real retained text and partial captures |
-| ThreadReader container, `scrape_threadreader` | Explicit `.threadreader-content` extraction | Corpus outcomes |
-| X quotes/replies/reposts/articles, `scrape_twitter` | `XGraph`, official API and opt-in FxEmbed hydration | Compare article-body coverage; official bearer unavailable |
-| Guest GraphQL article enrichment | Opt-in article-only guest provider after official/FxEmbed evidence | [Real provider capture and limitations](verification/x-guest.md); final corpus coverage difference remains separate |
-| JavaScript-rendered pages, `scrape_with_autocli` | Opt-in Chromium renderer with private profile and public-only proxy | Installed browser execution and real corpus reruns; no authenticated host profile |
-| Original PDF even when text extraction fails, `scrape_pdf` | Validated original retention and independent delivery, Poppler extraction | Live corpus and matching configured size limits |
-| Audio/video links, `handle_audio_url` | Supervised yt-dlp + full audio validation, including Xiaoyuzhou routing | Corpus/live results |
-| Uploaded Markdown/text narration, `handle_text_document` | Telegram file download, canonical source, md2audio, validated audio | Historical reply-file live test |
-| Optional Chinese translation, `translate_markdown` | Pinned hymt bridge, separate immutable derivative and document | Live presentation |
-| Title/summary and descriptive filename, `generate_article_enhancement` | ADK metadata, bounded filename, generated summary in delivery; dedicated `/summarize` output | Live presentation |
-| Cached article resend | Durable outputs and `/get JOB` | Verify reply-based use of saved files without unrelated transforms |
-| Separate Git export and optional push | Semantic projection and independent push cursor | Local fixture passed; real remote push remains untested |
-| CLI single URL, `--url` | Scoped durable operator capture, no Telegram polling/sending | Public CLI and installed execution |
-| Batch summary of local files, `summary` | Read-only CAS ingestion, argument/stdin paths, renamed copies, optional Git and Telegram | Repeat/recovery, input/output preservation and installed execution |
-| Processing/failure feedback, `send_message` | New durable admission/failure notices | Focused outbox and retry checks, live delivery |
-| Replies to initiating message, `reply_to` | New persisted origin and Bot API `reply_parameters` | JSON/multipart/restart checks and live client |
-| Configuration reload, `load_config` | Validated SIGHUP activation, immutable running-job snapshots | Preserve operation selection through `/refresh` |
-| Restart/network retry and authorization | Service lock, persisted cursor, bounded job retries, chat + user allowlists | Existing coverage plus deployed service evidence |
-| Requested historical reply commands | `/translate`, `/tts`, `/summarize`, `/start` | Source scoping, operation identity, full gates and deployment |
+| Multiple submitted URLs, `process_url` | `telegram::parse_requests`, durable child jobs | Frozen input accounting and source-bound corpus outcomes in release verification assets |
+| Web article extraction, `scrape_with_trafilatura` | `Documents`, Readability + HTML-to-Markdown with marked fallback | Retained HTML triage and corrective replay; no claim of human semantic completeness |
+| ThreadReader container, `scrape_threadreader` | Explicit `.threadreader-content` extraction | Explicit extraction fixture and per-input corpus results |
+| X quotes/replies/reposts/articles, `scrape_twitter` | `XGraph`, official API and opt-in FxEmbed hydration | Final article eligibility audit and real fallback evidence; official bearer unavailable |
+| Guest GraphQL article enrichment | Opt-in article-only guest provider after official/FxEmbed evidence | [Real provider capture and limitations](verification/x-guest.md); no eligible missing article bodies in the completed base corpus, so no incremental guest coverage claimed |
+| JavaScript-rendered pages, `scrape_with_autocli` | Opt-in Chromium renderer with private profile and public-only proxy | Installed browser execution and retained correction results; no authenticated host profile |
+| Original PDF even when text extraction fails, `scrape_pdf` | Validated original retention and independent delivery, Poppler extraction | Original-retention fixtures and corpus outcomes; configured size limits remain enforced |
+| Audio/video links, `handle_audio_url` | Supervised yt-dlp + full audio validation, including Xiaoyuzhou routing | Full-decode fixtures, prior live acceptance and corpus outcomes; provider denials remain explicit |
+| Uploaded Markdown/text narration, `handle_text_document` | Telegram file download, canonical source, md2audio, validated audio | Historical attachment fixtures passed; actual user-client reply-file roundtrip unobserved |
+| Optional Chinese translation, `translate_markdown` | Pinned hymt bridge, separate immutable derivative and document | Controlled operation/output tests and prior live provider receipts; current client presentation unobserved |
+| Title/summary and descriptive filename, `generate_article_enhancement` | ADK metadata, bounded filename, generated summary in delivery; dedicated `/summarize` output | Controlled operation/output tests and prior live provider receipts; current client presentation unobserved |
+| Cached article resend | Durable outputs and `/get JOB` | Controlled cached resend and operation-scoping checks; actual historical client roundtrip unobserved |
+| Separate Git export and optional push | Semantic projection and independent push cursor | Real local corpus export/restore and controlled remote fixtures are separate; real remote push untested |
+| CLI single URL, `--url` | Scoped durable operator capture, no Telegram polling/sending | [Public CLI and installed execution](verification/operator-input.md) passed at their recorded source revisions |
+| Batch summary of local files, `summary` | Read-only CAS ingestion, argument/stdin paths, renamed copies, optional Git and Telegram | [Repeat/recovery and preservation](verification/operator-input.md) fixtures and installed execution passed |
+| Processing/failure feedback, `send_message` | New durable admission/failure notices | Durable outbox/retry fixtures passed; actual current-client feedback remains unobserved |
+| Replies to initiating message, `reply_to` | New persisted origin and Bot API `reply_parameters` | JSON/multipart/restart fixtures passed; current user-client association unobserved |
+| Configuration reload, `load_config` | Validated SIGHUP activation, immutable running-job snapshots | Immutable operation selection and reload/refresh fixtures passed |
+| Restart/network retry and authorization | Service lock, persisted cursor, bounded job retries, chat + user allowlists | Source-bound recovery/authorization fixtures and separate runtime activation receipts |
+| Requested historical reply commands | `/translate`, `/tts`, `/summarize`, `/start` | Source scoping and operation identity fixtures, exact-source gates, installation and deployment; user-client roundtrip unobserved |
 
-The batch campaign uses the released executable, private canonical storage and
+The batch campaigns retain each run's exact executable digest, private canonical storage and
 disabled Telegram sends/Git pushes. Model generation, translation and narration
 are disabled in that capture-only campaign; media retrieval remains enabled.
 It does not establish model quality or Telegram playback acceptance.

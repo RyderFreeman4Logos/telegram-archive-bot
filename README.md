@@ -6,14 +6,15 @@ A new Rust service for durable Telegram source archives and validated audio.
 SQLite and immutable content-addressed files are authoritative; a separately
 configured Git repository receives a deterministic semantic projection.
 
-**Status: 0.1.0-rc.1 candidate; client playback validation is pending.**
+**Status: 0.1.0-rc.2 candidate; client playback validation is pending.**
 Core requirements are [F01–F20](docs/implementation/issue-map.json). Search (F21)
 and legacy import (F22) are optional. This repository has fresh history and
 contains no prior bot implementation or archive data.
 
-Read the [release notes](docs/release-notes-0.1.0-rc.1.md) and
-[actual acceptance evidence](docs/verification/f20.md) before activation.
-Real model/translation/TTS, downloads and three Telegram audio receipts passed;
+Read the [release notes](docs/release-notes-0.1.0-rc.2.md) and
+[RC1 provider/client evidence](docs/verification/f20.md) and the source-bound
+verification assets attached to the release before activation.
+The RC1 real model/translation/TTS, download and three Telegram audio checks passed;
 Desktop seeking and speed controls remain blocked by client access; Android
 playback is pending confirmation of the phone's test recipient.
 
@@ -44,8 +45,8 @@ Translation uses the separately built `archive-hymt-bridge` Rust binary and the
 they exercise the actual binary against a local HTTP fixture without credentials.
 
 Never put bot tokens, cookies, personal archives or live configuration in this
-repository. Production activation and real client playback validation are
-separate from compilation and deterministic testing.
+repository. The new service has an authorized trial deployment. Real client playback
+validation remains separate from compilation and deterministic testing.
 
 Producer and delivery contracts are documented in [speech](docs/speech.md),
 [media download](docs/media-download.md), [audio finalization](docs/audio-finalization.md)
