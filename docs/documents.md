@@ -26,6 +26,9 @@ Rust parser inside a blocking task. Worker admission must bound concurrent
 parses. See the [upstream readability API](https://docs.rs/dom_smoothie/0.18.2/dom_smoothie/struct.Readability.html)
 and [HTML conversion API](https://github.com/letmutex/htmd).
 
+A page with scripts and only headings/navigation/links is an unavailable dynamic
+shell. Short articles with actual prose remain eligible without a length floor.
+
 With `sources.browser_enabled = true`, a fetched HTML response that is not
 complete gets one Chromium headless attempt within the remaining download
 deadline. Already complete articles and non-HTML inputs do not launch a browser;
@@ -46,7 +49,11 @@ supervisor owns retries. Browser execution is disabled by default.
 Chromium's [headless dump-DOM interface](https://developer.chrome.com/docs/automation-and-testing/headless-cli)
 executes page JavaScript but does not report the final HTTP status or resolved
 URL. Those rendered observations remain null, while the initial HTTP request's
-status/redirects remain separate evidence. The renderer uses the documented
+status/redirects remain separate evidence. For extraction, a rendered HTML base
+element takes precedence; otherwise the submitted URL is the explicitly recorded
+unverified base for relative links and provider selection. Redirected pages without
+a base element can therefore have inaccurate relative links; no final URL is
+invented. The renderer uses the documented
 [proxy configuration](https://chromium.googlesource.com/chromium/src/+/main/net/docs/proxy.md).
 It does not reuse authenticated sessions, solve CAPTCHAs or bypass access controls.
 

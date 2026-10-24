@@ -33,3 +33,15 @@ correction; those failed logs were retained rather than reported as passes.
 Full exact-candidate gates, independent source review, installed-binary checks,
 runtime activation and real affected-source reruns have separate receipts. This
 document does not assert those later outcomes or universal challenge detection.
+
+The first public off/on comparison exposed a real integration gap: the JavaScript
+example retained the same 42-byte login link in both modes and was marked complete,
+so the renderer never ran. A separate affected corpus source changed from
+unavailable HTTP verification text to a rendered article, demonstrating that one
+positive case did not establish dynamic-page coverage. Independent review also
+found that rendered extraction lost relative-link and ThreadReader URL context.
+Both findings have deterministic regressions that failed before correction.
+The dynamic-page regression enters `Documents::url` through a test-only HTTP
+route, observes the renderer subprocess invocation, and confirms a short article
+does not invoke it. That subprocess boundary uses synthetic output; actual Chrome
+and public-source observations remain separate checks.
