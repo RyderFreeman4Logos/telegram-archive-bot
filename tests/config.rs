@@ -1,6 +1,17 @@
 use telegram_archive_bot::config::{Config, ConfigManager, SecretRef};
 
 #[test]
+fn semantic_file_limit_defaults_and_requires_a_positive_count() {
+    let default: Config = toml::from_str("[limits]\ninput_bytes = 10000000").unwrap();
+    assert_eq!(default.limits.semantic_files, 100_000);
+    let configured: Config = toml::from_str("[limits]\nsemantic_files = 200000").unwrap();
+    configured.validate().unwrap();
+    assert_eq!(configured.limits.semantic_files, 200_000);
+    let zero: Config = toml::from_str("[limits]\nsemantic_files = 0").unwrap();
+    assert!(zero.validate().is_err());
+}
+
+#[test]
 fn snapshots_reload_and_unknown_keys() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("config.toml");

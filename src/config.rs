@@ -244,6 +244,7 @@ pub struct Limits {
     pub input_bytes: u64,
     pub media_bytes: u64,
     pub work_bytes: u64,
+    pub semantic_files: usize,
     pub log_bytes: usize,
     pub download_seconds: u64,
     pub llm_seconds: u64,
@@ -272,6 +273,7 @@ impl Default for Limits {
             input_bytes: 10_000_000,
             media_bytes: 49_000_000,
             work_bytes: 1_000_000_000,
+            semantic_files: 100_000,
             log_bytes: 65536,
             download_seconds: 300,
             llm_seconds: 1700,
@@ -511,12 +513,13 @@ impl Config {
                 l.deliveries,
                 l.graph_nodes,
                 l.graph_depth,
-                l.max_urls
+                l.max_urls,
+                l.semantic_files
             ]
             .iter()
             .all(|v| *v > 0)
                 && l.max_attempts > 0,
-            "concurrency, graph and attempt limits must be positive"
+            "concurrency, graph, URL, semantic file and attempt limits must be positive"
         );
         for path in [
             &self.tools.ffmpeg,

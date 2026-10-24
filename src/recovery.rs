@@ -558,7 +558,7 @@ impl Store {
                 .checked_add(bytes.len() as u64)
                 .context("semantic size overflow")?;
             ensure!(
-                total <= config.limits.work_bytes && files.len() < 100000,
+                total <= config.limits.work_bytes && files.len() < config.limits.semantic_files,
                 "semantic import exceeds configured bound"
             );
             expected.insert(path.to_owned(), parts[2].to_owned());

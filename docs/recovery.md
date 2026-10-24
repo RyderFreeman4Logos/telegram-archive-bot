@@ -75,6 +75,15 @@ against those exact Git blob IDs. Modified bodies, symlinks, unsupported schemas
 unknown paths, missing references and inconsistent content/view digests fail
 before publishing a destination. Unrelated worktree files are not imported.
 
+`limits.semantic_files` is a positive file-count bound, defaulting to 100,000.
+For a larger archive, explicitly set it to the measured committed file count.
+Independently, `limits.input_bytes` bounds the Git tree listing and other Git
+stdout, while `limits.work_bytes` bounds the total captured semantic bytes.
+Each semantic file is also limited to the smaller of `work_bytes` and 64 MiB.
+Restoration holds captured files in memory; size these bounds for available RAM
+and storage. No bound is raised automatically, and rejected imports leave no
+published destination. These limits do not relax path or committed-object checks.
+
 The current export schema restores source identities, aliases, exact immutable
 revisions (including original newline reconstruction), observed relationships,
 views and exported text derivatives. Original observation IDs retain view-edge

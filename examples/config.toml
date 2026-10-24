@@ -60,3 +60,6 @@ hymt_bridge = "/home/YOUR_USER/.local/bin/archive-hymt-bridge"
 directory = "/home/YOUR_USER/.local/share/telegram-archive"
 branch = "main"
 push = false
+
+[limits]
+semantic_files = 100000 # Git-only restore; raise explicitly for a measured larger archive.
