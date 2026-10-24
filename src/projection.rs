@@ -138,17 +138,21 @@ impl Git<'_> {
         self.raw(&["ls-files", "--stage", "--", path], index).await
     }
     async fn put_index(&self, index: &Path, entries: &BTreeMap<String, String>) -> Result<()> {
-        for (path, oid) in entries {
-            self.raw(
-                &[
-                    "update-index",
-                    "--add",
-                    "--cacheinfo",
-                    &format!("100644,{oid},{path}"),
-                ],
-                Some(index),
-            )
-            .await?;
+        let mut entries = entries.iter();
+        loop {
+            let values: Vec<_> = entries
+                .by_ref()
+                .take(64)
+                .map(|(path, oid)| format!("100644,{oid},{path}"))
+                .collect();
+            if values.is_empty() {
+                break;
+            }
+            let mut args = vec!["update-index", "--add"];
+            for value in &values {
+                args.extend(["--cacheinfo", value]);
+            }
+            self.raw(&args, Some(index)).await?;
         }
         Ok(())
     }

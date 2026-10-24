@@ -76,6 +76,75 @@ fn snapshot(root: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
     Ok(files)
 }
 #[tokio::test]
+async fn bounded_index_updates_preserve_exact_entries_and_unrelated_staging() -> Result<()> {
+    let (dir, _store, mut config) = fixture()?;
+    let archive = config.archive.directory.clone().unwrap();
+    fs::create_dir(&archive)?;
+    git(&archive, &["init", "-b", "main"])?;
+    fs::write(archive.join("unrelated.txt"), "staged private note")?;
+    git(&archive, &["add", "unrelated.txt"])?;
+    let original_index = fs::read(archive.join(".git/index"))?;
+    let unrelated = git(&archive, &["ls-files", "--stage"])?;
+    let oid = git(&archive, &["hash-object", "-w", "unrelated.txt"])?;
+    let wrapper = dir.path().join("git-wrapper");
+    fs::write(
+        &wrapper,
+        "#!/bin/sh\nfor arg do\n  if [ \"$arg\" = update-index ]; then\n    printf 'update-index\\n' >> \"$0.calls\"\n  fi\ndone\nexec /usr/bin/git \"$@\"\n",
+    )?;
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700))?;
+    config.tools.git = wrapper;
+    let cancel = CancellationToken::new();
+    let git_tool = Git {
+        config: &config,
+        archive: archive.clone(),
+        work: tempfile::Builder::new()
+            .permissions(fs::Permissions::from_mode(0o700))
+            .tempdir_in(dir.path())?,
+        cancel: &cancel,
+    };
+    let index = dir.path().join("index");
+    fs::write(&index, &original_index)?;
+    git_tool.put_index(&index, &BTreeMap::new()).await?;
+    assert!(!dir.path().join("git-wrapper.calls").exists());
+    let entries: BTreeMap<_, _> = (0..129)
+        .map(|n| {
+            (
+                format!("{PREFIX}/revisions/test {n:03},file.txt"),
+                oid.clone(),
+            )
+        })
+        .collect();
+    git_tool.put_index(&index, &entries).await?;
+    let expected = entries
+        .iter()
+        .map(|(path, oid)| format!("100644 {oid} 0\t{path}"))
+        .chain([unrelated])
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(
+        git_tool.raw(&["ls-files", "--stage"], Some(&index)).await?,
+        expected
+    );
+    let tree = git_tool.raw(&["write-tree"], Some(&index)).await?;
+    assert_eq!(
+        git_tool
+            .raw(&["ls-tree", "-r", &tree], None)
+            .await?
+            .lines()
+            .count(),
+        130
+    );
+    assert_eq!(fs::read(archive.join(".git/index"))?, original_index);
+    assert_eq!(
+        fs::read_to_string(dir.path().join("git-wrapper.calls"))?
+            .lines()
+            .count(),
+        3,
+        "129 entries must use three bounded Git index updates"
+    );
+    Ok(())
+}
+#[tokio::test]
 async fn deterministic_abc_exact_views_and_unrelated_index() -> Result<()> {
     let (_dir, store, config) = fixture()?;
     let archive = config.archive.directory.as_ref().unwrap();
