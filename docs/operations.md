@@ -72,6 +72,43 @@ hold; old jobs and uncertain sends require explicit reconciliation even after
 `release-recovery-hold` clears the global hold. Use private destinations outside
 Git worktrees. Full and Git-only restore have [different guarantees](recovery.md).
 
+## Operator URL and local files
+
+`--url` captures one public URL through the normal durable pipeline without
+polling or sending Telegram messages. Enabled metadata, translation, media and
+narration providers still run; the configured independent Git archive is used.
+
+```sh
+telegram-archive-bot --config /private/config.toml --url 'https://example.com/article'
+telegram-archive-bot --config /private/config.toml summary '/private/article.md'
+find /private/articles -type f -name '*.md' -print0 |
+  telegram-archive-bot --config /private/config.toml summary --stdin0 --rename --auto-commit
+```
+
+`summary` requires an enabled model and accepts Markdown/text files as arguments
+or newline-separated paths on stdin. `--stdin0` accepts NUL-separated paths,
+including filenames containing newlines. Inputs are read-only bounded regular
+files; symlinks and FIFOs are rejected. Originals and summaries are retained in
+canonical CAS. Downloadable copies appear below
+`state_dir/operator-results/JOB_ID/`. `--rename` names the retained copy from the
+generated title; it never renames the input. Existing output with changed bytes
+is reported as a conflict and preserved. `--auto-commit` uses only the configured
+independent archive and its explicit push policy.
+
+Telegram sending is disabled by default. `summary --send-telegram` requires an
+enabled bot and exactly one allowed chat/user; it sends only this invocation's
+persisted jobs. Uncertain deliveries remain unreconciled rather than being
+blindly resent. Operator IDs are negative and do not advance polling cursors.
+An identical input/configuration resumes the same job, including expired leases,
+and reuses completed outputs. It does not reset exhausted retries, cancellation
+or a recovery hold. Changed bytes or options produce a distinct request.
+
+The JSON report lists each input, job, state, output paths and error. Partial or
+failed results produce a nonzero exit while preserving other inputs' results.
+The CLI claims only the selected jobs; a running service may also process them
+through the same fenced leases. Capturing a URL is not proof that the origin
+supplied complete content.
+
 ## Explicit live activation
 
 Copy [config](../examples/config.toml) and [environment placeholders](../examples/bot.env.example)

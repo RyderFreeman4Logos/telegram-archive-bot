@@ -25,8 +25,8 @@ An implemented path is not evidence that every live source can be recovered.
 | Title/summary and descriptive filename, `generate_article_enhancement` | ADK metadata, bounded filename, generated summary in delivery; dedicated `/summarize` output | Live presentation |
 | Cached article resend | Durable outputs and `/get JOB` | Verify reply-based use of saved files without unrelated transforms |
 | Separate Git export and optional push | Semantic projection and independent push cursor | Local fixture passed; real remote push remains untested |
-| CLI single URL, `--url` | Existing replay accepts synthetic updates | Add convenient operator input without poller or send side effects |
-| Batch summary of local files, `summary` | No convenient local-file command in the initial release | Read-only file ingestion, canonical derivatives and batch outcomes |
+| CLI single URL, `--url` | Scoped durable operator capture, no Telegram polling/sending | Public CLI and installed execution |
+| Batch summary of local files, `summary` | Read-only CAS ingestion, argument/stdin paths, renamed copies, optional Git and Telegram | Repeat/recovery, input/output preservation and installed execution |
 | Processing/failure feedback, `send_message` | New durable admission/failure notices | Focused outbox and retry checks, live delivery |
 | Replies to initiating message, `reply_to` | New persisted origin and Bot API `reply_parameters` | JSON/multipart/restart checks and live client |
 | Configuration reload, `load_config` | Validated SIGHUP activation, immutable running-job snapshots | Preserve operation selection through `/refresh` |

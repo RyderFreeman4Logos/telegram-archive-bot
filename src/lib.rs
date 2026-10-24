@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod batch;
 mod browser;
 pub mod commands;
 pub mod config;

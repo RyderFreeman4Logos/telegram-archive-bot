@@ -290,24 +290,28 @@ impl Store {
         self.claim_for_phase(time, None)
     }
     pub(crate) fn claim_control(&self) -> Result<Option<Lease>> {
-        self.claim_filtered(now(), Some(Phase::Fetch), Some(true))
+        self.claim_filtered(now(), Some(Phase::Fetch), Some(true), None)
     }
     pub(crate) fn claim_source(&self) -> Result<Option<Lease>> {
-        self.claim_filtered(now(), Some(Phase::Fetch), Some(false))
+        self.claim_filtered(now(), Some(Phase::Fetch), Some(false), None)
     }
     fn claim_for_phase(&self, time: i64, phase: Option<Phase>) -> Result<Option<Lease>> {
-        self.claim_filtered(time, phase, None)
+        self.claim_filtered(time, phase, None, None)
+    }
+    pub(crate) fn claim_job_id(&self, id: &str) -> Result<Option<Lease>> {
+        self.claim_filtered(now(), None, None, Some(id))
     }
     fn claim_filtered(
         &self,
         time: i64,
         phase: Option<Phase>,
         control: Option<bool>,
+        job_id: Option<&str>,
     ) -> Result<Option<Lease>> {
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let expired = tx.prepare("UPDATE jobs SET state='failed',error='absolute_deadline_exhausted',generation=generation+1 WHERE state IN ('queued','retryable','running') AND deadline<=?1 RETURNING id")?
-            .query_map([time], |row| row.get::<_, String>(0))?
+        let expired = tx.prepare("UPDATE jobs SET state='failed',error='absolute_deadline_exhausted',generation=generation+1 WHERE state IN ('queued','retryable','running') AND deadline<=?1 AND (?2 IS NULL OR id=?2) RETURNING id")?
+            .query_map(params![time,job_id], |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         for id in expired {
             notify_failure(&tx, &id, "absolute_deadline_exhausted")?;
@@ -319,7 +323,7 @@ impl Store {
             return Ok(None);
         }
         let selected = loop {
-            let id=tx.query_row("SELECT id FROM jobs WHERE cancel_requested=0 AND (?2 IS NULL OR phase=?2) AND (?3 IS NULL OR (json_extract(request,'$.kind')='command')=?3) AND ((state IN ('queued','retryable') AND available_at<=?1) OR (state='running' AND lease_until<=?1)) ORDER BY available_at,rowid LIMIT 1",params![time,phase.map(Phase::as_str),control],|r|r.get::<_,String>(0)).optional()?;
+            let id=tx.query_row("SELECT id FROM jobs WHERE cancel_requested=0 AND (?2 IS NULL OR phase=?2) AND (?3 IS NULL OR (json_extract(request,'$.kind')='command')=?3) AND (?4 IS NULL OR id=?4) AND ((state IN ('queued','retryable') AND available_at<=?1) OR (state='running' AND lease_until<=?1)) ORDER BY available_at,rowid LIMIT 1",params![time,phase.map(Phase::as_str),control,job_id],|r|r.get::<_,String>(0)).optional()?;
             let Some(id) = id else {
                 tx.commit()?;
                 return Ok(None);

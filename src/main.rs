@@ -7,8 +7,11 @@ use telegram_archive_bot::storage::Store;
 struct Cli {
     #[arg(long)]
     config: Option<std::path::PathBuf>,
+    /// Capture one URL into canonical storage without Telegram polling or sending.
+    #[arg(short, long)]
+    url: Option<String>,
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -21,6 +24,18 @@ enum Command {
     Status,
     /// Compute persisted updates without polling or sending; enabled providers may run.
     Replay { updates: std::path::PathBuf },
+    /// Summarize read-only local files; with no paths, read paths from stdin.
+    Summary {
+        files: Vec<std::path::PathBuf>,
+        #[arg(long)]
+        stdin0: bool,
+        #[arg(long)]
+        rename: bool,
+        #[arg(long)]
+        auto_commit: bool,
+        #[arg(long)]
+        send_telegram: bool,
+    },
     #[command(hide = true)]
     MediaEgressRelay {
         socket: std::path::PathBuf,
@@ -67,23 +82,23 @@ enum Command {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    match cli.command {
+    if let Some(url) = cli.url {
+        anyhow::ensure!(
+            cli.command.is_none(),
+            "--url cannot be combined with a subcommand"
+        );
+        let config = Config::load(&cli.config.unwrap_or_else(Config::default_path))?;
+        return batch_result(with_signals(|cancel| async move {
+            telegram_archive_bot::batch::capture_url(&config, &url, &cancel).await
+        })?);
+    }
+    match cli
+        .command
+        .ok_or_else(|| anyhow::anyhow!("provide a command or --url; see --help"))?
+    {
         Command::Run => {
             let path = cli.config.unwrap_or_else(Config::default_path);
-            tokio::runtime::Runtime::new()?.block_on(async {
-                let cancel = tokio_util::sync::CancellationToken::new();
-                let token = cancel.clone();
-                let signal = tokio::spawn(async move {
-                    let mut term =
-                        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-                    tokio::select! {_=tokio::signal::ctrl_c()=>{},_=term.recv()=>{}}
-                    token.cancel();
-                    Ok::<_, anyhow::Error>(())
-                });
-                let result = telegram_archive_bot::runtime::serve(path, cancel).await;
-                signal.abort();
-                result
-            })?;
+            with_signals(|cancel| telegram_archive_bot::runtime::serve(path, cancel))?;
         }
         Command::Replay { updates } => {
             let config = Config::load(&cli.config.unwrap_or_else(Config::default_path))?;
@@ -101,6 +116,46 @@ fn main() -> anyhow::Result<()> {
                     &tokio_util::sync::CancellationToken::new(),
                 ))?;
             println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Command::Summary {
+            mut files,
+            stdin0,
+            rename,
+            auto_commit,
+            send_telegram,
+        } => {
+            use std::{io::Read, os::unix::ffi::OsStringExt};
+            let config = Config::load(&cli.config.unwrap_or_else(Config::default_path))?;
+            anyhow::ensure!(
+                !stdin0 || files.is_empty(),
+                "--stdin0 takes paths only from stdin"
+            );
+            if files.is_empty() {
+                let mut input = Vec::new();
+                std::io::stdin()
+                    .take(config.limits.input_bytes.saturating_add(1))
+                    .read_to_end(&mut input)?;
+                anyhow::ensure!(
+                    input.len() as u64 <= config.limits.input_bytes,
+                    "path list exceeds input limit"
+                );
+                files = input
+                    .split(|b| *b == if stdin0 { 0 } else { b'\n' })
+                    .filter(|path| !path.is_empty())
+                    .map(|path| std::ffi::OsString::from_vec(path.to_vec()).into())
+                    .collect();
+            }
+            batch_result(with_signals(|cancel| async move {
+                telegram_archive_bot::batch::summarize(
+                    &config,
+                    files,
+                    rename,
+                    auto_commit,
+                    send_telegram,
+                    &cancel,
+                )
+                .await
+            })?)?;
         }
         Command::MediaEgressRelay {
             socket,
@@ -207,4 +262,34 @@ fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+fn batch_result(result: telegram_archive_bot::batch::BatchResult) -> anyhow::Result<()> {
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    anyhow::ensure!(
+        result.failed == 0,
+        "one or more inputs are incomplete; see JSON results"
+    );
+    Ok(())
+}
+
+fn with_signals<T, F, Fut>(operation: F) -> anyhow::Result<T>
+where
+    F: FnOnce(tokio_util::sync::CancellationToken) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<T>>,
+{
+    tokio::runtime::Runtime::new()?.block_on(async {
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let token = cancel.clone();
+        let signal = tokio::spawn(async move {
+            let mut term =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+            tokio::select! { _=tokio::signal::ctrl_c()=>{}, _=term.recv()=>{} }
+            token.cancel();
+            Ok::<_, anyhow::Error>(())
+        });
+        let result = operation(cancel).await;
+        signal.abort();
+        result
+    })
 }

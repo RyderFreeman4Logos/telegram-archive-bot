@@ -70,6 +70,11 @@ pub enum Request {
         name: String,
         size: u64,
     },
+    LocalDocument {
+        digest: String,
+        name: String,
+        rename: bool,
+    },
     Command {
         name: String,
         argument: String,

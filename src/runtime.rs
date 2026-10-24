@@ -292,6 +292,15 @@ async fn fetch(
                 &docs.attachment(unique_id, name, &bytes, cancel).await?,
             )?;
         }
+        Request::LocalDocument { digest, name, .. } => {
+            let bytes = store.read_blob(digest, lease.config.limits.input_bytes)?;
+            let mut extraction = docs.attachment(digest, name, &bytes, cancel).await?;
+            extraction.capture.identity = Identity {
+                provider: "local_document".into(),
+                external_id: digest.clone(),
+            };
+            store.accept_extraction(lease, &extraction)?;
+        }
     }
     Ok(())
 }
@@ -504,6 +513,30 @@ async fn execute(
                     caption: caption.into(),
                 });
             }
+            if operation == Some(Operation::Summarize)
+                && let Request::LocalDocument {
+                    digest,
+                    name,
+                    rename,
+                } = lease.job.request.source()
+            {
+                deliveries.push(Delivery::Document {
+                    blob_digest: digest.clone(),
+                    name: if *rename {
+                        format!(
+                            "{}.md",
+                            crate::documents::display_name(&title)
+                                .chars()
+                                .take(45)
+                                .collect::<String>()
+                        )
+                    } else {
+                        name.clone()
+                    },
+                    mime: "text/markdown".into(),
+                    caption: "Retained original input".into(),
+                });
+            }
             if operation.is_none()
                 && let Some(original) = outputs["fetch"].get("original")
             {
@@ -572,6 +605,18 @@ pub async fn step(
         store.claim_phase(phase)?
     };
     let Some(lease) = claimed else {
+        return Ok(false);
+    };
+    run_lease(store, lease, relay, cancel).await?;
+    Ok(true)
+}
+pub(crate) async fn step_job(
+    store: &Store,
+    id: &str,
+    relay: &Path,
+    cancel: &CancellationToken,
+) -> Result<bool> {
+    let Some(lease) = store.claim_job_id(id)? else {
         return Ok(false);
     };
     run_lease(store, lease, relay, cancel).await?;
