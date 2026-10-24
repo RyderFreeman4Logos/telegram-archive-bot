@@ -1,5 +1,6 @@
 use super::*;
 use crate::jobs::{JobState, Scope};
+use rusqlite::OptionalExtension;
 use std::{fs, os::unix::fs::PermissionsExt};
 fn fixture() -> Result<(tempfile::TempDir, Store, Config)> {
     let root = tempfile::Builder::new()
@@ -29,6 +30,233 @@ fn scope() -> Scope {
         chat_id: 2,
         user_id: 3,
     }
+}
+
+#[test]
+fn legacy_podcast_hosts_are_media_but_lookalikes_are_not() {
+    assert!(media_url("https://www.xiaoyuzhoufm.com/episode/example"));
+    assert!(!media_url(
+        "https://xiaoyuzhoufm.com.example.org/episode/example"
+    ));
+}
+
+#[tokio::test]
+async fn final_documents_separate_original_translation_and_requested_summary() -> Result<()> {
+    for (input, expected) in [
+        ("Original source.", vec!["original", "translation"]),
+        ("/translate Original source.", vec!["translation"]),
+        ("/summarize Original source.", vec!["summary"]),
+    ] {
+        let (_root, store, mut config) = fixture()?;
+        config.model.enabled = true;
+        config.translation.enabled = true;
+        store.ingest(&config, &update(1, input), &json!({}))?;
+        let cancel = CancellationToken::new();
+        step(&store, Phase::Fetch, &std::env::current_exe()?, &cancel).await?;
+        let metadata = store.claim_phase(Phase::Metadata)?.unwrap();
+        let m = store.publish_bytes(&serde_json::to_vec(&json!({
+            "schema_version":1,"workflow":"fixture","config_id":metadata.job.config_id,
+            "revisions":[],"blocks":[],"semantic_fidelity_verified":false,
+            "result":{"schema_version":1,"title":"Test title","summary":"Generated summary.",
+                "language":"en","tags":[],"source_blocks":[]}
+        }))?)?;
+        store.finish_phase(
+            &metadata,
+            &if metadata.config.model.enabled {
+                json!({"metadata_digest":m.digest})
+            } else {
+                json!({})
+            },
+            Some(Phase::Translate),
+            false,
+        )?;
+        let translated = store.claim_phase(Phase::Translate)?.unwrap();
+        let output = store.publish_bytes("译文内容。".as_bytes())?;
+        let translation = store.publish_bytes(&serde_json::to_vec(&json!({
+            "schema_version":1,"workflow":"fixture","source_revision":"fixture","config_id":translated.job.config_id,
+            "language":"zh","profile":"fixture","output_digest":output.digest,
+            "normalized_source_digest":"fixture","bridge_digest":"fixture","partial":false,
+            "semantic_fidelity_verified":false,
+            "report":{"schema_version":1,"hymt_revision":"fixture","source_digest":"fixture",
+                "normalized_source_digest":"fixture","output_digest":output.digest,"inference_fingerprint":"fixture",
+                "cache_verified":false,"segments":1,"segment_input_tokens":[3],"counting_source":"fixture",
+                "completed_segments":[0],"degraded_segments":[],"preserved":[],"retained":[]}
+        }))?)?;
+        store.finish_phase(
+            &translated,
+            &if translated.config.translation.enabled {
+                json!({"translations":[translation.digest]})
+            } else {
+                json!({})
+            },
+            Some(Phase::Finalize),
+            false,
+        )?;
+        step(&store, Phase::Finalize, &std::env::current_exe()?, &cancel).await?;
+        let payloads: Vec<String> = store
+            .connection()?
+            .prepare("SELECT payload FROM outbox ORDER BY ordinal")?
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        assert_eq!(payloads.len(), expected.len(), "presentation for {input}");
+        for (payload, kind) in payloads.iter().zip(expected) {
+            let Delivery::Document {
+                blob_digest, name, ..
+            } = serde_json::from_str(payload)?
+            else {
+                panic!("expected document")
+            };
+            let body =
+                String::from_utf8(store.read_blob(&blob_digest, config.limits.input_bytes)?)?;
+            match kind {
+                "original" => {
+                    assert!(body.contains("Original source."));
+                    assert!(!body.contains("译文内容"));
+                }
+                "translation" => {
+                    assert!(body.contains("译文内容"));
+                    assert!(!body.contains("Original source."));
+                    assert!(name.contains("translation"));
+                }
+                "summary" => {
+                    assert!(body.contains("Generated summary."));
+                    assert!(!body.contains("Original source."));
+                    assert!(name.contains("summary"));
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn live_source_admission_and_terminal_failure_have_durable_scoped_feedback() -> Result<()> {
+    let (_root, store, mut config) = fixture()?;
+    config.telegram.enabled = true;
+    let incoming = update(71, "/tts Original source");
+    store.ingest(&config, &incoming, &json!({}))?;
+    let notice: Option<String> = store
+        .connection()?
+        .query_row("SELECT payload FROM outbox", [], |row| row.get(0))
+        .optional()?;
+    assert!(
+        notice.is_some(),
+        "live admissions must queue progress feedback"
+    );
+    let before: u64 = store
+        .connection()?
+        .query_row("SELECT count(*) FROM outbox", [], |row| row.get(0))?;
+    store.ingest(&config, &incoming, &json!({}))?;
+    assert_eq!(
+        store
+            .connection()?
+            .query_row("SELECT count(*) FROM outbox", [], |row| row
+                .get::<_, u64>(0))?,
+        before
+    );
+    step(
+        &store,
+        Phase::Fetch,
+        &std::env::current_exe()?,
+        &CancellationToken::new(),
+    )
+    .await?;
+    let payloads: Vec<String> = store
+        .connection()?
+        .prepare("SELECT payload FROM outbox ORDER BY ordinal")?
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    assert_eq!(payloads.len(), 2);
+    assert!(
+        payloads
+            .iter()
+            .any(|p| p.contains("failed") && p.contains("/retry"))
+    );
+    assert_eq!(
+        crate::operator::metrics(&store)?["queues"]["jobs"]["failed"],
+        1
+    );
+    assert_eq!(
+        store.source_counts()?.1,
+        0,
+        "disabled TTS must not report a successful operation"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn invalid_live_input_gets_help_without_echoing_content_or_responding_to_other_users()
+-> Result<()> {
+    let (_root, store, mut config) = fixture()?;
+    config.telegram.enabled = true;
+    let invalid = update(72, "/not-supported secret-content-that-must-not-be-echoed");
+    store.ingest(&config, &invalid, &json!({}))?;
+    control_step(&store, &std::env::current_exe()?, &CancellationToken::new()).await?;
+    let payloads: Vec<String> = store
+        .connection()?
+        .prepare("SELECT payload FROM outbox")?
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    assert_eq!(
+        payloads.len(),
+        1,
+        "authorized invalid input needs actionable feedback"
+    );
+    assert!(payloads[0].contains("/help") && !payloads[0].contains("secret-content"));
+    let mut unauthorized = update(73, "/tts other-user-content");
+    unauthorized
+        .message
+        .as_mut()
+        .unwrap()
+        .from
+        .as_mut()
+        .unwrap()
+        .id = 99;
+    store.ingest(&config, &unauthorized, &json!({}))?;
+    control_step(&store, &std::env::current_exe()?, &CancellationToken::new()).await?;
+    assert_eq!(
+        store
+            .connection()?
+            .query_row("SELECT count(*) FROM outbox", [], |row| row
+                .get::<_, u64>(0))?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn exhausted_deadlines_and_attempts_notify_once_when_claiming() -> Result<()> {
+    for deadline in [true, false] {
+        let (_root, store, mut config) = fixture()?;
+        config.telegram.enabled = true;
+        config.limits.max_attempts = 1;
+        lease(&store, &config, 81, "Source awaiting work")?;
+        store.connection()?.execute(
+            if deadline {
+                "UPDATE jobs SET deadline=0"
+            } else {
+                "UPDATE jobs SET lease_until=0"
+            },
+            [],
+        )?;
+        assert!(store.claim_phase(Phase::Fetch)?.is_none());
+        assert_eq!(
+            store
+                .connection()?
+                .query_row("SELECT count(*) FROM outbox", [], |r| r.get::<_, u64>(0))?,
+            2,
+            "exhausted admission budgets must produce failure feedback"
+        );
+        assert!(store.claim_phase(Phase::Fetch)?.is_none());
+        assert_eq!(
+            store
+                .connection()?
+                .query_row("SELECT count(*) FROM outbox", [], |r| r.get::<_, u64>(0))?,
+            2
+        );
+    }
+    Ok(())
 }
 #[test]
 fn retry_metric_counts_repeated_phase_attempts_and_excludes_phase_progress() -> Result<()> {
@@ -128,6 +356,8 @@ async fn product_web_text_attachment_and_empty_text_pdf_keep_usable_originals() 
         .await?;
     let text = lease(&store, &config, 2, "Synthetic document submission")?;
     store.accept_extraction(&text, &attachment)?;
+    let narration = lease(&store, &config, 4, "/tts Narrate only")?;
+    store.accept_extraction(&narration, &attachment)?;
     let pdf = docs
         .attachment(
             "empty-text-pdf",
@@ -189,7 +419,7 @@ async fn product_web_text_attachment_and_empty_text_pdf_keep_usable_originals() 
             .phase_outputs(&pdf_job.job.id)?
             .contains_key("synthesize")
     );
-    for job in [&web.job.id, &text.job.id] {
+    for job in [&web.job.id, &text.job.id, &narration.job.id] {
         let outputs = store.phase_outputs(job)?;
         assert!(outputs.contains_key("synthesize"));
         let ready: i64 = store.connection()?.query_row(
@@ -199,6 +429,15 @@ async fn product_web_text_attachment_and_empty_text_pdf_keep_usable_originals() 
         )?;
         assert_eq!(ready, 1);
     }
+    assert_eq!(
+        store.connection()?.query_row(
+            "SELECT count(*) FROM outbox WHERE job_id=?1 AND kind='document'",
+            [&narration.job.id],
+            |r| r.get::<_, u64>(0)
+        )?,
+        0,
+        "narration-only commands must not resend the source document"
+    );
     store.integrity()?;
     Ok(())
 }
@@ -373,7 +612,7 @@ async fn doctor_is_offline_and_redacts_tool_output_and_config_values() -> Result
     assert!(!text.contains("SYNTHETIC_SECRET_MUST_NOT_ESCAPE"));
     assert_eq!(report["network_probes_performed"], false);
     assert_eq!(report["telegram_messages_sent"], 0);
-    assert_eq!(report["database_schema"], 10);
+    assert_eq!(report["database_schema"], crate::storage::SCHEMA_VERSION);
     assert!(text.contains("[REDACTED]"));
     Ok(())
 }

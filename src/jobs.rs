@@ -118,6 +118,24 @@ impl std::fmt::Display for Failure {
 }
 impl std::error::Error for Failure {}
 
+fn notify_failure(tx: &Transaction<'_>, job_id: &str, reason: &str) -> Result<()> {
+    let enabled: bool = tx.query_row(
+        "SELECT json_extract(c.config,'$.telegram.enabled') FROM jobs j JOIN config_snapshots c ON c.id=j.config_id WHERE j.id=?1",
+        [job_id], |row| row.get(0),
+    )?;
+    if enabled {
+        crate::delivery::enqueue_notice_tx(
+            tx,
+            job_id,
+            -2,
+            format!(
+                "Processing failed ({reason}).\n/status {job_id}\n/retry {job_id}\n/refresh {job_id}"
+            ),
+        )?;
+    }
+    Ok(())
+}
+
 pub(crate) fn load_job(conn: &rusqlite::Connection, id: &str) -> Result<Job> {
     let mut statement = conn.prepare("SELECT j.id,j.bot_id,i.chat_id,i.user_id,j.request,j.config_id,j.state,j.phase,j.attempt,j.deadline,j.error,j.result,j.partial,j.force_run FROM jobs j JOIN inbox i ON i.bot_id=j.bot_id AND i.update_id=j.update_id WHERE j.id=?1")?;
     let mut rows = statement.query([id])?;
@@ -288,7 +306,12 @@ impl Store {
     ) -> Result<Option<Lease>> {
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.execute("UPDATE jobs SET state='failed',error='absolute_deadline_exhausted',generation=generation+1 WHERE state IN ('queued','retryable','running') AND deadline<=?1",[time])?;
+        let expired = tx.prepare("UPDATE jobs SET state='failed',error='absolute_deadline_exhausted',generation=generation+1 WHERE state IN ('queued','retryable','running') AND deadline<=?1 RETURNING id")?
+            .query_map([time], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for id in expired {
+            notify_failure(&tx, &id, "absolute_deadline_exhausted")?;
+        }
         if tx.query_row("SELECT EXISTS(SELECT 1 FROM operational_holds)", [], |r| {
             r.get::<_, bool>(0)
         })? {
@@ -319,6 +342,7 @@ impl Store {
                 .unwrap_or(0);
             if attempts >= config.limits.max_attempts {
                 tx.execute("UPDATE jobs SET state='failed',error='phase_attempt_budget_exhausted',generation=generation+1 WHERE id=?1",[&id])?;
+                notify_failure(&tx, &id, "phase_attempt_budget_exhausted")?;
                 continue;
             }
             break (job, config, tools);
@@ -433,6 +457,9 @@ impl Store {
                 lease.job.id
             ],
         )?;
+        if state == "failed" {
+            notify_failure(&tx, &lease.job.id, &failure.to_string())?;
+        }
         tx.commit()?;
         Ok(())
     }

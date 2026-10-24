@@ -9,7 +9,7 @@ use anyhow::{Result, ensure};
 use rusqlite::{TransactionBehavior, params};
 use serde_json::{Value, json};
 
-const HELP: &str = "/status [JOB]\n/cancel JOB\n/retry JOB\n/retry delivery OUTBOX\n/get JOB\n/refresh JOB\n/resend OUTBOX --accept-duplicate-risk\nUnknown sends may already have arrived. Resend can duplicate a message. In-flight sends may finish after cancellation.";
+const HELP: &str = "Send a URL, text, or a .md/.txt/.pdf file to archive it.\nReply to a historical message or file with:\n/translate — translate to the configured language\n/tts — narrate the original text\n/summarize — create a summary\nThese commands also accept inline text or a URL.\n/help\n/status [JOB]\n/cancel JOB\n/retry JOB\n/retry delivery OUTBOX\n/get JOB\n/refresh JOB\n/resend OUTBOX --accept-duplicate-risk\nUnknown sends may already have arrived. Resend can duplicate a message. In-flight sends may finish after cancellation.";
 fn one<'a>(args: &[&'a str]) -> Result<&'a str> {
     ensure!(args.len() == 1, "expected one job ID");
     Ok(args[0])
@@ -42,7 +42,9 @@ impl Store {
             self.job_for(scope, id)?;
             let payloads = self
                 .connection()?
-                .prepare("SELECT payload FROM outbox WHERE job_id=?1 ORDER BY ordinal")?
+                .prepare(
+                    "SELECT payload FROM outbox WHERE job_id=?1 AND ordinal>=0 ORDER BY ordinal",
+                )?
                 .query_map([id], |r| r.get::<_, String>(0))?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             for payload in &payloads {
@@ -57,6 +59,7 @@ impl Store {
         fence(&tx, lease, now())?;
         let mut deliveries = vec![];
         let result = match name.as_str() {
+            "_invalid_input" => json!({"error":"unsupported_input"}),
             "help" => {
                 ensure!(args.is_empty(), "help takes no arguments");
                 json!({"help":HELP})
@@ -106,8 +109,9 @@ impl Store {
             "get" => {
                 let id = one(&args)?;
                 scoped_job(&tx, scope, id)?;
-                let mut q =
-                    tx.prepare("SELECT payload FROM outbox WHERE job_id=?1 ORDER BY ordinal")?;
+                let mut q = tx.prepare(
+                    "SELECT payload FROM outbox WHERE job_id=?1 AND ordinal>=0 ORDER BY ordinal",
+                )?;
                 let payloads = q
                     .query_map([id], |r| r.get::<_, String>(0))?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -133,12 +137,21 @@ impl Store {
                 );
                 let new_id = digest(format!("refresh-v1:{}:{id}", lease.job.id));
                 let ordinal:u64=tx.query_row("SELECT COALESCE(MAX(ordinal),0)+1 FROM jobs WHERE bot_id=?1 AND update_id=(SELECT update_id FROM jobs WHERE id=?2)",params![scope.bot_id,lease.job.id],|r|r.get(0))?;
-                tx.execute("INSERT INTO jobs(id,bot_id,update_id,ordinal,request,config_id,state,force_run) SELECT ?1,bot_id,update_id,?2,?3,config_id,'queued',1 FROM jobs WHERE id=?4",params![new_id,ordinal,serde_json::to_string(&job.request)?,lease.job.id])?;
+                let config_json = serde_json::to_string(&job.request.job_config(&lease.config))?;
+                let tools = serde_json::to_string(&lease.tools)?;
+                let config_id = digest(format!("{config_json}\n{tools}"));
+                tx.execute(
+                    "INSERT INTO config_snapshots VALUES(?1,?2,?3) ON CONFLICT DO NOTHING",
+                    params![config_id, config_json, tools],
+                )?;
+                tx.execute("INSERT INTO jobs(id,bot_id,update_id,ordinal,request,config_id,state,force_run) SELECT ?1,bot_id,update_id,?2,?3,?4,'queued',1 FROM jobs WHERE id=?5",params![new_id,ordinal,serde_json::to_string(&job.request)?,config_id,lease.job.id])?;
                 json!({"previous_job":id,"new_job":new_id,"force_refresh":true})
             }
             _ => anyhow::bail!("unsupported command"),
         };
-        let text = if name == "help" {
+        let text = if name == "_invalid_input" {
+            "Unsupported input. Send a URL, text, or a .md/.txt/.pdf file. Reply to text or a supported file with /translate, /tts, or /summarize. Use /help for commands.".into()
+        } else if name == "help" {
             HELP.into()
         } else {
             serde_json::to_string_pretty(&result)?
@@ -199,6 +212,61 @@ mod tests {
             .connection()?
             .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))?)
     }
+    #[test]
+    fn get_resends_saved_results_without_the_admission_notice() -> Result<()> {
+        let (_temp, store, source) = fixture()?;
+        let conn = store.connection()?;
+        let tx = conn.unchecked_transaction()?;
+        crate::delivery::enqueue_progress_tx(&tx, &source.job.id)?;
+        tx.commit()?;
+        store.enqueue_deliveries(
+            &source,
+            &[Delivery::Text {
+                text: "Saved result".into(),
+            }],
+        )?;
+        store.finish_phase(&source, &json!({}), None, false)?;
+        let get = request(&store, &config(), 2, 3, &format!("/get {}", source.job.id))?;
+        let output = store.execute_command(&get)?;
+        assert_eq!(output["result"]["saved_deliveries_queued"], 1);
+        let payloads: Vec<String> = store
+            .connection()?
+            .prepare("SELECT payload FROM outbox WHERE job_id=?1")?
+            .query_map([&get.job.id], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        assert!(payloads.iter().all(|p| !p.contains("Queued.")));
+        Ok(())
+    }
+    #[test]
+    fn refresh_preserves_requested_operation_with_the_new_configuration() -> Result<()> {
+        let temp = tempfile::Builder::new()
+            .permissions(fs::Permissions::from_mode(0o700))
+            .tempdir()?;
+        let store = Store::open(temp.path())?;
+        let mut c = config();
+        c.model.enabled = true;
+        c.translation.enabled = true;
+        c.synthesis.enabled = true;
+        let original = request(&store, &c, 1, 3, "/tts Original source")?;
+        store.finish_phase(&original, &json!({}), None, false)?;
+        c.synthesis.voice = "zh-CN-XiaoxiaoNeural".into();
+        let refresh = request(&store, &c, 2, 3, &format!("/refresh {}", original.job.id))?;
+        let output = store.execute_command(&refresh)?;
+        let refreshed = store.claim_phase(Phase::Fetch)?.unwrap();
+        assert_eq!(
+            refreshed.job.id,
+            output["result"]["new_job"].as_str().unwrap()
+        );
+        assert_eq!(refreshed.job.request, original.job.request);
+        assert!(refreshed.job.force && refreshed.config.synthesis.enabled);
+        assert_eq!(refreshed.config.synthesis.voice, "zh-CN-XiaoxiaoNeural");
+        assert!(
+            !refreshed.config.model.enabled && !refreshed.config.translation.enabled,
+            "refresh must not broaden a narration-only request"
+        );
+        Ok(())
+    }
+
     #[test]
     fn help_status_get_and_refresh_are_scoped_and_atomically_completed() -> Result<()> {
         let (_t, store, source) = fixture()?;
@@ -372,16 +440,13 @@ mod tests {
             3,
             &format!("/refresh {}", source.job.id),
         )?;
-        // A conflicting immutable logical reply tests rollback after the child was inserted.
-        store.enqueue_deliveries(
-            &refresh,
-            &[Delivery::Text {
-                text: "existing immutable reply".into(),
-            }],
-        )?;
+        // Fail the queue insertion after the refresh child and snapshot were inserted.
+        store.connection()?.execute_batch("CREATE TRIGGER reject_response BEFORE INSERT ON outbox BEGIN SELECT RAISE(ABORT,'fixture queue failure'); END;")?;
         let before = count(&store, "jobs")?;
+        let snapshots = count(&store, "config_snapshots")?;
         assert!(store.execute_command(&refresh).is_err());
         assert_eq!(count(&store, "jobs")?, before);
+        assert_eq!(count(&store, "config_snapshots")?, snapshots);
         assert!(store.phase_outputs(&refresh.job.id)?.is_empty());
         Ok(())
     }
