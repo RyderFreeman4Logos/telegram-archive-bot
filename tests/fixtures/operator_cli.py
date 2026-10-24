@@ -69,7 +69,9 @@ llm_seconds = 10
 job_seconds = 60
 [archive]
 directory = "{root}/archive"
-push = false
+push = true
+remote = "file:///definitely-missing-operator-fixture-remote"
+branch = "main"
 ''')
 
 def invoke(args, data=None, timeout=180):
@@ -114,6 +116,7 @@ try:
     assert db.execute('SELECT * FROM polling_cursors').fetchall() == [(1, 78)]
     assert db.execute('SELECT count(*) FROM inbox WHERE update_id<0 AND bot_id=0').fetchone()[0] == 2
     assert db.execute('SELECT count(*) FROM delivery_attempts').fetchone()[0] == 0
+    assert db.execute('SELECT count(*) FROM projection_pushes').fetchone()[0] == 0
     before = counts(db)
     repeated = invoke(args, data)
     assert repeated.returncode == 0 and json.loads(repeated.stdout) == result

@@ -11,6 +11,12 @@ inputs, repeated-result reuse without model calls, and expired archive-lease
 recovery. An unrelated queued job and polling cursor remain unchanged. Default
 execution creates no delivery attempts.
 
+The final public CLI fixture enables remote push in the input configuration and
+points it at a nonexistent synthetic remote. The prior candidate failed while
+trying to push; operator commands now explicitly select local projection and the
+fixture passes with zero push records. Remote publication remains available
+through the separate `project` command or service configuration.
+
 The same fixture checks mixed missing/valid files, FIFO and symlink rejection,
 private-network URL rejection, preserved edited-output conflicts, Unicode/newline
 filenames, and SIGTERM during a model call. Cancellation leaves the subsequent

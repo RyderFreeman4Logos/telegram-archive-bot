@@ -76,7 +76,8 @@ Git worktrees. Full and Git-only restore have [different guarantees](recovery.md
 
 `--url` captures one public URL through the normal durable pipeline without
 polling or sending Telegram messages. Enabled metadata, translation, media and
-narration providers still run; the configured independent Git archive is used.
+narration providers still run; the configured independent Git archive is used
+locally. Operator input commands never push a remote repository.
 
 ```sh
 telegram-archive-bot --config /private/config.toml --url 'https://example.com/article'
@@ -93,7 +94,8 @@ canonical CAS. Downloadable copies appear below
 `state_dir/operator-results/JOB_ID/`. `--rename` names the retained copy from the
 generated title; it never renames the input. Existing output with changed bytes
 is reported as a conflict and preserved. `--auto-commit` uses only the configured
-independent archive and its explicit push policy.
+independent archive for local commits. Use `project` with explicitly enabled
+push configuration for remote publication.
 
 Telegram sending is disabled by default. `summary --send-telegram` requires an
 enabled bot and exactly one allowed chat/user; it sends only this invocation's

@@ -37,6 +37,8 @@ pub struct InputResult {
 
 fn selected_config(config: &Config, commit: bool, send: bool) -> Result<Config> {
     let mut selected = config.clone();
+    // Local input commands authorize local commits; remote pushes use project/run explicitly.
+    selected.archive.push = false;
     if send {
         ensure!(config.telegram.enabled, "Telegram is disabled");
         ensure!(
@@ -54,7 +56,6 @@ fn selected_config(config: &Config, commit: bool, send: bool) -> Result<Config> 
         );
     } else {
         selected.archive.directory = None;
-        selected.archive.push = false;
     }
     Ok(selected)
 }
