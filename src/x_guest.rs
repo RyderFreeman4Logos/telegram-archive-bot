@@ -5,6 +5,7 @@ use reqwest::{
     Method,
     header::{HeaderMap, HeaderValue},
 };
+use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
@@ -139,23 +140,22 @@ impl Guest {
                 }
                 continue;
             }
-            let payload: Result<Value, _> = serde_json::from_slice(&response.bytes);
             let secrets = [
                 token.as_str(),
                 self.bearer.as_str(),
                 rejected_token.as_deref().unwrap_or_default(),
             ];
-            // JSON escapes must not hide authentication material in decoded content or raw-only fields.
+            // Scan before Value can discard overwritten duplicate members.
+            let auth_scan = scan_auth(&response.bytes, &secrets);
+            let invalid_json = auth_scan.is_err();
             let echoes_auth = secrets.iter().filter(|s| !s.is_empty()).any(|secret| {
                 response
                     .bytes
                     .windows(secret.len())
                     .any(|part| part == secret.as_bytes())
-            }) || payload
-                .as_ref()
-                .is_ok_and(|value| contains_auth(value, &secrets));
+            }) || auth_scan.unwrap_or(false);
             let mut post = match response.status {
-                200 => payload
+                200 => serde_json::from_slice(&response.bytes)
                     .map_err(|_| Failure::InvalidOutput)
                     .and_then(|value| parse(id, &value))
                     .unwrap_or_else(|_| {
@@ -169,13 +169,21 @@ impl Guest {
                 _ => Post::unavailable(id, FetchStatus::Error, "guest_article_endpoint_error"),
             };
             // Activation payloads and accidentally echoed authentication material are never archived.
-            if echoes_auth {
+            if echoes_auth || invalid_json {
                 post = Post::unavailable(
                     id,
                     FetchStatus::Error,
-                    "guest_response_contains_auth_material",
+                    if echoes_auth {
+                        "guest_response_contains_auth_material"
+                    } else {
+                        "guest_invalid_payload"
+                    },
                 );
-                post.evidence["raw_response_discarded_for_credentials"] = json!(true);
+                post.evidence[if echoes_auth {
+                    "raw_response_discarded_for_credentials"
+                } else {
+                    "raw_response_discarded_for_invalid_json"
+                }] = json!(true);
             } else {
                 post.raw = response.bytes;
             }
@@ -192,19 +200,61 @@ impl Guest {
     }
 }
 
-fn contains_auth(value: &Value, secrets: &[&str]) -> bool {
-    let contains = |text: &str| {
-        secrets
+fn scan_auth(bytes: &[u8], secrets: &[&str]) -> serde_json::Result<bool> {
+    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+    let found = AuthScan(secrets).deserialize(&mut deserializer)?;
+    deserializer.end()?;
+    Ok(found)
+}
+
+#[derive(Clone, Copy)]
+struct AuthScan<'a>(&'a [&'a str]);
+impl<'de> DeserializeSeed<'de> for AuthScan<'_> {
+    type Value = bool;
+    fn deserialize<D: serde::Deserializer<'de>>(self, deserializer: D) -> Result<bool, D::Error> {
+        deserializer.deserialize_any(self)
+    }
+}
+impl<'de> Visitor<'de> for AuthScan<'_> {
+    type Value = bool;
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("a JSON value")
+    }
+    fn visit_str<E: serde::de::Error>(self, text: &str) -> Result<bool, E> {
+        Ok(self
+            .0
             .iter()
-            .any(|secret| !secret.is_empty() && text.contains(secret))
-    };
-    match value {
-        Value::String(text) => contains(text),
-        Value::Array(values) => values.iter().any(|value| contains_auth(value, secrets)),
-        Value::Object(fields) => fields
-            .iter()
-            .any(|(key, value)| contains(key) || contains_auth(value, secrets)),
-        _ => false,
+            .any(|secret| !secret.is_empty() && text.contains(secret)))
+    }
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<bool, A::Error> {
+        let mut found = false;
+        while let Some(key) = map.next_key_seed(self)? {
+            found |= key;
+            found |= map.next_value_seed(self)?;
+        }
+        Ok(found)
+    }
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<bool, A::Error> {
+        let mut found = false;
+        while let Some(value) = seq.next_element_seed(self)? {
+            found |= value;
+        }
+        Ok(found)
+    }
+    fn visit_unit<E: serde::de::Error>(self) -> Result<bool, E> {
+        Ok(false)
+    }
+    fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<bool, E> {
+        Ok(false)
+    }
+    fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<bool, E> {
+        Ok(false)
+    }
+    fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<bool, E> {
+        Ok(false)
+    }
+    fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<bool, E> {
+        Ok(false)
     }
 }
 
@@ -394,7 +444,8 @@ mod tests {
 
     #[tokio::test]
     async fn refreshes_once_reuses_token_and_retains_only_query_raw() {
-        let body = payload(json!({"plain_text":"Complete article body"}));
+        let mut body = payload(json!({"plain_text":"Complete article body"}));
+        body["benign_types"] = json!([true, false, null, -7, 9, 1.25, {"nested":["ordinary"]}]);
         let fixture = Fixture::new(vec![
             (200, json!({"guest_token":"SYNTHETIC_GUEST_ONE"})),
             (401, json!({"error":"expired"})),
@@ -504,7 +555,7 @@ mod tests {
     async fn escaped_authentication_echoes_cannot_enter_canonical_storage() {
         use std::os::unix::fs::PermissionsExt;
         for secret in ["SYNTHETIC_GUEST_ONE", "SYNTHETIC_PUBLIC_CLIENT"] {
-            for location in ["body", "key", "nested_value"] {
+            for location in ["body", "key", "nested_value", "duplicate_value"] {
                 for refresh in [false, true] {
                     let mut response = payload(
                         json!({"plain_text":if location == "body" {secret} else {"Benign body"}}),
@@ -515,6 +566,15 @@ mod tests {
                     if location == "nested_value" {
                         response["extra"] = json!({"nested":[secret]});
                     }
+                    let response = if location == "duplicate_value" {
+                        format!(
+                            "{{\"extra\":{},\"extra\":null,{}",
+                            json!(secret),
+                            &response.to_string()[1..]
+                        )
+                    } else {
+                        response.to_string()
+                    };
                     let wire = response
                         .to_string()
                         .replace("SYNTHETIC_", r"\u0053YNTHETIC_");
@@ -573,6 +633,38 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_guest_json_is_not_archived_as_unchecked_raw() {
+        for wire in [
+            "{\"unfinished\":".to_owned(),
+            format!(
+                "{} {{\"trailing\":true}}",
+                payload(json!({"plain_text":"Body"}))
+            ),
+            format!("{}0{}", "[".repeat(140), "]".repeat(140)),
+        ] {
+            let fixture = Fixture::raw(vec![
+                (
+                    200,
+                    json!({"guest_token":"SYNTHETIC_GUEST_ONE"}).to_string(),
+                ),
+                (200, wire),
+            ])
+            .await;
+            let post = fixture
+                .guest
+                .fetch("100", 32768, &CancellationToken::new())
+                .await
+                .unwrap();
+            assert_eq!(post.status, FetchStatus::Error);
+            assert!(post.content.is_none() && post.raw.is_empty());
+            assert_eq!(
+                post.evidence["raw_response_discarded_for_invalid_json"],
+                true
+            );
         }
     }
 

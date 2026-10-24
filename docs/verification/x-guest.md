@@ -18,8 +18,9 @@ The overall deadline includes activation, refresh and response reads; their body
 bytes share a per-fetch budget. Guest tokens live only in memory. Activation
 responses and the first rejected-token response are excluded from storage; the
 latter's HTTP status is retained. Final query responses are retained unless they
-echo authentication material, in which case content and raw bytes are discarded
-with an explicit observation. No private credentials or corpus URLs are fixtures.
+echo authentication material or fail the bounded JSON scan, in which case content
+and raw bytes are discarded with an explicit observation. No private credentials
+or corpus URLs are fixtures.
 
 An empty Article block list initially reproduced a false hydrated-body result.
 The parser regression then passed after hydration required actual body text.
@@ -30,11 +31,15 @@ JSON-escaped authentication text could bypass the literal-byte guard. Both have
 observed failing regressions. Article admission now shares parsed X host/path/ID
 checks across official and FxEmbed inputs. The actual parser-to-graph fixture
 checks ordinary prose, external and lookalike hosts, and genuine Article links.
-Authentication checks cover decoded JSON keys and values as well as raw bytes,
-including the token rejected during the same fetch. The provider/storage fixture
+Authentication checks cover every decoded JSON key and value in the input stream
+as well as raw bytes, including the token rejected during the same fetch. A second
+review and failing HTTP regression showed that normalizing to `Value` first lost
+overwritten duplicate fields. The streaming Serde visitor now examines those
+fields before normalization and rejects malformed, trailing or excessive-depth
+JSON rather than retaining unchecked raw bytes. The provider/storage fixture
 rejects escaped token/bearer content and raw-only fields without creating a
-revision or CAS object. Preliminary test compile and temporary-directory permission errors are retained
-separately and are not the behavioral failure evidence.
+revision or CAS object. Preliminary test compile and temporary-directory
+permission errors are retained separately and are not behavioral failure evidence.
 
 On 2026-10-24 at 05:39 UTC, the actual Rust guest provider returned HTTP 200 for
 one privately selected public Article. All 132 nonempty text blocks were retained
