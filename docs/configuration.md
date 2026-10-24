@@ -32,6 +32,13 @@ the absolute execution deadline. Other defaults are 300 seconds for downloads,
 1,800 for synthesis, 900 for media processing and 120 for sends. Individual
 attempts cannot exceed the job's remaining budget. Tool paths are absolute.
 
+`sources.browser_enabled` opts into isolated JavaScript rendering after an
+incomplete HTML fetch. Set `tools.browser` to a pinned native Chromium/Chrome
+executable resolving under `/usr` or `/opt/google/chrome`; wrappers requiring a
+user environment are unsuitable. Bubblewrap and its namespace support are
+required. Doctor reports browser availability separately. The browser uses a
+fresh profile and never imports host cookies or login sessions.
+
 Local TTS plus multiple speakers is rejected. Speakers are explicit resolved
 voice assignments, not random choices at execution. Speech defaults to Chinese
 voice notes, speed 1.0. Raw synthesis and finalized delivery are separate

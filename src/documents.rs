@@ -20,6 +20,224 @@ pub struct Original {
     pub validated: bool,
 }
 
+#[cfg(test)]
+mod browser_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[tokio::test]
+    async fn rendered_relative_links_and_threadreader_keep_explicit_base_context() -> Result<()> {
+        let root = tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()?;
+        let adapter = Documents {
+            store: Store::open(root.path())?,
+            config: Config::default(),
+            http: PublicHttp::default(),
+        };
+        let cancel = CancellationToken::new();
+        for (url, html, thread) in [
+            ("https://example.org/articles/page", format!("<html><body><article><h1>Article</h1><p>{}</p><a href='../references'>Reference</a><img src='../figure.png'></article></body></html>", "Useful article prose. ".repeat(80)), false),
+            ("https://threadreaderapp.com/thread/123.html", "<html><body><div class='threadreader-content'><p>Thread-only body.</p></div><aside>Unrelated sidebar.</aside></body></html>".into(), true),
+        ] {
+            let initial = adapter.response(Response {submitted:url.parse()?,resolved:url.parse()?,redirects:vec![],status:200,content_type:"text/html".into(),charset:None,bytes:b"<html><body></body></html>".to_vec()},&cancel).await?;
+            let result = adapter.finish_browser_attempt(url,initial,Ok((html.into_bytes(),json!({}))),&cancel).await?;
+            let body=&result.capture.content.as_ref().unwrap().body;
+            if thread {
+                assert!(result.capture.extractor.starts_with("browser+threadreader-container"), "rendered ThreadReader must retain its provider-specific extraction");
+                assert!(body.contains("Thread-only body.") && !body.contains("Unrelated sidebar."));
+            } else {
+                assert!(body.contains("https://example.org/references"), "relative links need a declared extraction base");
+                assert!(body.contains("https://example.org/figure.png"));
+            }
+            assert!(result.capture.evidence["resolved_url"].is_null() && result.capture.evidence["http_status"].is_null());
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn url_renders_navigation_only_script_shell_but_preserves_short_articles() -> Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let root = tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target"))?;
+        let shell = "<html><head><title>Dynamic article</title><script>/* browser loads the article */</script></head><body><header><h1><a href='/'>Site</a></h1></header><p><a href='/login'>Login</a></p><nav>Next</nav><footer>Site footer</footer></body></html>";
+        let short = "<html><head><script>/* analytics */</script></head><body><article><h1>Note</h1><p>Brief but substantive content.</p></article></body></html>";
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let http = PublicHttp::fixture_to(listener.local_addr()?);
+        let server = tokio::spawn(async move {
+            for html in [shell, short] {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = vec![];
+                let mut buffer = [0; 1024];
+                while !bytes.windows(4).any(|b| b == b"\r\n\r\n") {
+                    let n = socket.read(&mut buffer).await.unwrap();
+                    assert!(n > 0);
+                    bytes.extend_from_slice(&buffer[..n]);
+                }
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{html}",html.len()).as_bytes()).await.unwrap();
+            }
+        });
+        let marker = root.path().join("render-invoked");
+        let tool = root.path().join("fake-bwrap");
+        let rendered = format!(
+            "<html><body><article><h1>Loaded article</h1><p>{}</p></article></body></html>",
+            "Rendered substantive text. ".repeat(80)
+        );
+        std::fs::write(
+            &tool,
+            format!(
+                "#!/usr/bin/python3\nimport pathlib,sys\nassert '--unshare-all' in sys.argv and '--browser' in sys.argv\np=pathlib.Path({})\np.write_text(p.read_text()+'x' if p.exists() else 'x')\nprint({})\n",
+                serde_json::to_string(&marker)?,
+                serde_json::to_string(&rendered)?
+            ),
+        )?;
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o700))?;
+        let mut config = Config::default();
+        config.sources.browser_enabled = true;
+        config.tools.browser = "/usr/bin/true".into();
+        config.tools.bubblewrap = tool;
+        let adapter = Documents {
+            store: Store::open(root.path().join("state"))?,
+            config,
+            http,
+        };
+        let cancel = CancellationToken::new();
+        let result = adapter.url("http://example.org/dynamic", &cancel).await?;
+        assert!(
+            marker.exists(),
+            "the public URL path must invoke the renderer for a navigation-only script shell"
+        );
+        assert!(result.capture.extractor.starts_with("browser+"));
+        assert!(
+            result
+                .capture
+                .content
+                .unwrap()
+                .body
+                .contains("Rendered substantive text.")
+        );
+        let result = adapter.url("http://example.org/short", &cancel).await?;
+        assert!(
+            result
+                .capture
+                .content
+                .unwrap()
+                .body
+                .contains("Brief but substantive content.")
+        );
+        assert_eq!(
+            std::fs::read_to_string(marker)?,
+            "x",
+            "a valid short article must not launch the browser"
+        );
+        server.await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn browser_result_keeps_raw_evidence_and_fails_without_losing_initial_capture()
+    -> Result<()> {
+        let root = tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()?;
+        let adapter = Documents {
+            store: Store::open(root.path())?,
+            config: Config::default(),
+            http: PublicHttp::default(),
+        };
+        let url = "https://example.org/article";
+        let initial_html = b"<html><title>Just a moment</title><body><form id='challenge-form'>Checking your browser</form></body></html>";
+        let cancel = CancellationToken::new();
+        let initial = adapter
+            .response(
+                Response {
+                    submitted: url.parse()?,
+                    resolved: url.parse()?,
+                    redirects: vec![],
+                    status: 200,
+                    content_type: "text/html".into(),
+                    charset: None,
+                    bytes: initial_html.to_vec(),
+                },
+                &cancel,
+            )
+            .await?;
+        assert_eq!(initial.capture.status, FetchStatus::Forbidden);
+        let html = format!(
+            "<html><title>Rendered article</title><body><article><h1>Rendered article</h1><p>{}</p></article></body></html>",
+            "An independently rendered article contains enough substantive prose for extraction. "
+                .repeat(20)
+        );
+        let result = adapter
+            .finish_browser_attempt(
+                url,
+                initial.clone(),
+                Ok((
+                    html.as_bytes().to_vec(),
+                    json!({"http_status":null,"resolved_url":null}),
+                )),
+                &cancel,
+            )
+            .await?;
+        assert_eq!(result.capture.status, FetchStatus::Complete);
+        assert!(result.capture.extractor.starts_with("browser+"));
+        assert!(result.capture.evidence["http_status"].is_null());
+        assert!(result.capture.evidence["resolved_url"].is_null());
+        assert_eq!(result.capture.evidence["initial_fetch"]["http_status"], 200);
+        assert_eq!(
+            result.capture.evidence["initial_fetch"]["original"]["digest"],
+            initial.original.digest
+        );
+        assert_eq!(
+            adapter.store.read_blob(&initial.original.digest, 10000)?,
+            initial_html
+        );
+        assert_eq!(
+            adapter.store.read_blob(&result.original.digest, 10000)?,
+            html.as_bytes()
+        );
+        let blocked = adapter
+            .finish_browser_attempt(
+                url,
+                initial.clone(),
+                Ok((initial_html.to_vec(), json!({}))),
+                &cancel,
+            )
+            .await?;
+        assert_eq!(blocked.original.digest, initial.original.digest);
+        assert_eq!(blocked.capture.status, FetchStatus::Forbidden);
+        assert!(blocked.capture.content.is_none() && blocked.text_digest.is_none());
+        assert_eq!(
+            blocked.capture.evidence["browser_attempt"]["failure"],
+            "verification"
+        );
+        let failed = adapter
+            .finish_browser_attempt(
+                url,
+                initial.clone(),
+                Err(Failure::ToolMissing.into()),
+                &cancel,
+            )
+            .await?;
+        assert_eq!(failed.original.digest, initial.original.digest);
+        assert_eq!(
+            failed.capture.evidence["browser_attempt"]["failure"],
+            "tool_missing"
+        );
+        cancel.cancel();
+        let error = adapter
+            .finish_browser_attempt(url, initial, Err(Failure::Cancelled.into()), &cancel)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<Failure>(),
+            Some(Failure::Cancelled)
+        ));
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Extraction {
     pub capture: Capture,
@@ -81,6 +299,21 @@ fn decode(bytes: &[u8], declared: Option<&str>, html: bool) -> Result<(String, S
     ))
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum HtmlRejection {
+    Verification,
+    Login,
+    BrowserError,
+    ScriptShell,
+}
+impl std::fmt::Display for HtmlRejection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("HTML is an access or browser interstitial")
+    }
+}
+impl std::error::Error for HtmlRejection {}
+
 fn html_content(html: String, url: Option<&str>) -> Result<(Content, bool, String)> {
     let mut reader = dom_smoothie::Readability::new(
         html,
@@ -98,6 +331,88 @@ fn html_content(html: String, url: Option<&str>) -> Result<(Content, bool, Strin
     while let Some((node, depth)) = pending.pop() {
         ensure!(depth <= 128, "HTML depth limit exceeded");
         pending.extend(node.children_it(false).map(|child| (child, depth + 1)));
+    }
+    if reader
+        .doc
+        .select("#main-frame-error, body.neterror")
+        .length()
+        > 0
+    {
+        return Err(HtmlRejection::BrowserError.into());
+    }
+    let has_scripts = reader.doc.select("script").length() > 0;
+    let challenge = reader
+        .doc
+        .select("#challenge-form, #cf-challenge-running, #cf-error-details, #px-captcha")
+        .length()
+        > 0;
+    let password = reader.doc.select("input[type='password']").length() > 0;
+    reader
+        .doc
+        .select("script, style, noscript, iframe")
+        .remove();
+    let visible = reader.doc.select("body").text().to_string();
+    let heading = format!(
+        "{} {}",
+        reader.get_article_title(),
+        reader.doc.select("h1").text()
+    )
+    .to_lowercase();
+    if visible.len() < 4000 && reader.doc.select("article").text().len() < 600 {
+        if challenge
+            || [
+                "checking your browser",
+                "just a moment",
+                "verify you are human",
+                "security check",
+                "access denied",
+                "attention required",
+            ]
+            .iter()
+            .any(|phrase| heading.contains(phrase))
+        {
+            return Err(HtmlRejection::Verification.into());
+        }
+        if password
+            && ["sign in", "log in", "login"]
+                .iter()
+                .any(|phrase| heading.contains(phrase))
+        {
+            return Err(HtmlRejection::Login.into());
+        }
+    }
+    if has_scripts {
+        let mut nodes = vec![reader.doc.root()];
+        let mut substantive = false;
+        while let Some(node) = nodes.pop() {
+            if node.is_text() && !node.text().trim().is_empty() {
+                substantive = true;
+                break;
+            }
+            if !matches!(
+                node.node_name().as_deref(),
+                Some(
+                    "head"
+                        | "header"
+                        | "footer"
+                        | "nav"
+                        | "aside"
+                        | "form"
+                        | "a"
+                        | "h1"
+                        | "h2"
+                        | "h3"
+                        | "h4"
+                        | "h5"
+                        | "h6"
+                )
+            ) {
+                nodes.extend(node.children_it(false));
+            }
+        }
+        if !substantive {
+            return Err(HtmlRejection::ScriptShell.into());
+        }
     }
     let converter = htmd::HtmlToMarkdown::builder()
         .skip_tags(vec!["script", "style", "noscript", "iframe", "form"])
@@ -165,6 +480,8 @@ pub struct Documents {
 }
 impl Documents {
     pub async fn url(&self, url: &str, cancel: &CancellationToken) -> Result<Extraction> {
+        let deadline =
+            tokio::time::Instant::now() + Duration::from_secs(self.config.limits.download_seconds);
         let response = self
             .http
             .get(
@@ -175,7 +492,69 @@ impl Documents {
                 cancel,
             )
             .await?;
-        self.response(response, cancel).await
+        let html = matches!(
+            response.content_type.as_str(),
+            "text/html" | "application/xhtml+xml"
+        );
+        let initial = self.response(response, cancel).await?;
+        if !self.config.sources.browser_enabled
+            || !html
+            || initial.capture.status == FetchStatus::Complete
+        {
+            return Ok(initial);
+        }
+        let rendered = crate::browser::render(
+            &self.store,
+            &self.config,
+            url,
+            deadline.saturating_duration_since(tokio::time::Instant::now()),
+            cancel,
+        )
+        .await;
+        self.finish_browser_attempt(url, initial, rendered, cancel)
+            .await
+    }
+
+    async fn finish_browser_attempt(
+        &self,
+        url: &str,
+        mut initial: Extraction,
+        rendered: Result<(Vec<u8>, serde_json::Value)>,
+        cancel: &CancellationToken,
+    ) -> Result<Extraction> {
+        match rendered {
+            Ok((bytes, evidence)) => {
+                let mut result = self
+                    .extract(
+                        Identity::from_url(url)?,
+                        Some(url),
+                        None,
+                        "rendered.html",
+                        "text/html",
+                        Some("utf-8"),
+                        &bytes,
+                        None,
+                        cancel,
+                    )
+                    .await?;
+                result.capture.evidence["browser"] = evidence;
+                result.capture.evidence["initial_fetch"] = initial.capture.evidence.clone();
+                if result.capture.content.is_some() {
+                    result.capture.extractor = format!("browser+{}", result.capture.extractor);
+                    return Ok(result);
+                }
+                initial.capture.evidence["browser_attempt"] = result.capture.evidence;
+            }
+            Err(error) => {
+                if cancel.is_cancelled() {
+                    return Err(Failure::Cancelled.into());
+                }
+                initial.capture.evidence["browser_attempt"] = json!({"status":"failed",
+                    "tool_failure":error.downcast_ref::<crate::process::ToolError>().map(|e|e.kind),
+                    "failure":error.downcast_ref::<Failure>()});
+            }
+        }
+        Ok(initial)
     }
 
     pub async fn response(
@@ -198,7 +577,7 @@ impl Documents {
                 &response.content_type,
                 response.charset.as_deref(),
                 &response.bytes,
-                response.status,
+                Some(response.status),
                 cancel,
             )
             .await?;
@@ -233,7 +612,7 @@ impl Documents {
             mime,
             None,
             bytes,
-            200,
+            None,
             cancel,
         )
         .await
@@ -249,11 +628,11 @@ impl Documents {
         mime: &str,
         charset: Option<&str>,
         bytes: &[u8],
-        http_status: u16,
+        http_status: Option<u16>,
         cancel: &CancellationToken,
     ) -> Result<Extraction> {
         ensure!(
-            !bytes.is_empty() && bytes.len() as u64 <= self.config.limits.input_bytes,
+            bytes.len() as u64 <= self.config.limits.input_bytes,
             "document byte limit exceeded"
         );
         if cancel.is_cancelled() {
@@ -280,8 +659,10 @@ impl Documents {
             original,
             text_digest: None,
         };
-        if !(200..300).contains(&http_status) {
-            result.capture.status = match http_status {
+        if let Some(status) = http_status
+            && !(200..300).contains(&status)
+        {
+            result.capture.status = match status {
                 401 | 403 => FetchStatus::Forbidden,
                 404 | 410 => FetchStatus::Missing,
                 _ => FetchStatus::Error,
@@ -305,7 +686,14 @@ impl Documents {
             if let Ok((text, encoding)) = decode(bytes, charset, html) {
                 result.capture.evidence["encoding"] = json!(encoding);
                 let extracted = if html {
-                    let url = resolved.map(str::to_owned);
+                    let url = resolved.or(submitted).map(str::to_owned);
+                    result.capture.evidence["extraction_base_url"] = json!(url);
+                    result.capture.evidence["extraction_base_policy"] =
+                        json!(if resolved.is_some() {
+                            "observed_http_url"
+                        } else {
+                            "unverified_submitted_url"
+                        });
                     tokio::task::spawn_blocking(move || html_content(text, url.as_deref())).await?
                 } else {
                     Ok((
@@ -317,18 +705,34 @@ impl Documents {
                         "text-decoder-v1".into(),
                     ))
                 };
-                if let Ok((content, partial, extractor)) = extracted
-                    && !content.body.trim().is_empty()
-                    && content.body.len() as u64 <= self.config.limits.input_bytes
-                {
-                    result.original.validated = true;
-                    result.capture.content = Some(content);
-                    result.capture.extractor = extractor;
-                    result.capture.status = if partial {
-                        FetchStatus::Partial
-                    } else {
-                        FetchStatus::Complete
-                    };
+                match extracted {
+                    Ok((content, partial, extractor))
+                        if !content.body.trim().is_empty()
+                            && content.body.len() as u64 <= self.config.limits.input_bytes =>
+                    {
+                        result.original.validated = true;
+                        result.capture.content = Some(content);
+                        result.capture.extractor = extractor;
+                        result.capture.status = if partial {
+                            FetchStatus::Partial
+                        } else {
+                            FetchStatus::Complete
+                        };
+                    }
+                    Err(error) => {
+                        if let Some(reason) = error.downcast_ref::<HtmlRejection>() {
+                            result.capture.status = if matches!(
+                                reason,
+                                HtmlRejection::BrowserError | HtmlRejection::ScriptShell
+                            ) {
+                                FetchStatus::Error
+                            } else {
+                                FetchStatus::Forbidden
+                            };
+                            result.capture.evidence["failure"] = json!(reason);
+                        }
+                    }
+                    _ => {}
                 }
             } else {
                 result.capture.evidence["failure"] = json!("invalid_or_unsupported_encoding");

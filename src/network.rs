@@ -77,6 +77,16 @@ struct FixtureRoute {
     connect: SocketAddr,
 }
 impl PublicHttp {
+    #[cfg(test)]
+    pub(crate) fn fixture_to(connect: SocketAddr) -> Self {
+        Self {
+            fixture: Some(FixtureRoute {
+                addresses: vec!["93.184.216.34:80".parse().unwrap()],
+                connect,
+            }),
+        }
+    }
+
     pub async fn get(
         &self,
         input: &str,

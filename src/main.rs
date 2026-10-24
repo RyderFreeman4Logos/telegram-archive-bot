@@ -25,6 +25,8 @@ enum Command {
     MediaEgressRelay {
         socket: std::path::PathBuf,
         executable: std::path::PathBuf,
+        #[arg(long)]
+        browser: bool,
         #[arg(last = true)]
         args: Vec<std::ffi::OsString>,
     },
@@ -103,11 +105,12 @@ fn main() -> anyhow::Result<()> {
         Command::MediaEgressRelay {
             socket,
             executable,
+            browser,
             args,
         } => {
             let runtime = tokio::runtime::Runtime::new()?;
             let status = runtime.block_on(telegram_archive_bot::egress::relay(
-                socket, executable, args,
+                socket, executable, args, browser,
             ))?;
             std::process::exit(status);
         }

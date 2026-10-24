@@ -219,6 +219,7 @@ pub struct Tools {
     pub git: PathBuf,
     pub hymt_bridge: PathBuf,
     pub bubblewrap: PathBuf,
+    pub browser: PathBuf,
 }
 impl Default for Tools {
     fn default() -> Self {
@@ -232,6 +233,7 @@ impl Default for Tools {
             git: "/usr/bin/git".into(),
             hymt_bridge: "/usr/local/bin/archive-hymt-bridge".into(),
             bubblewrap: "/usr/bin/bwrap".into(),
+            browser: "/usr/bin/chromium".into(),
         }
     }
 }
@@ -311,6 +313,7 @@ pub struct Sources {
     pub x_enabled: bool,
     pub x_fallback_enabled: bool,
     pub media_enabled: bool,
+    pub browser_enabled: bool,
 }
 
 impl Config {
@@ -513,6 +516,7 @@ impl Config {
             &self.tools.git,
             &self.tools.hymt_bridge,
             &self.tools.bubblewrap,
+            &self.tools.browser,
         ] {
             ensure!(path.is_absolute(), "tool paths must be absolute");
         }

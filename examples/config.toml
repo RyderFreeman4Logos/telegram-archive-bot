@@ -38,6 +38,7 @@ language = "zh"
 x_enabled = false
 x_fallback_enabled = false
 media_enabled = false
+browser_enabled = false
 # x_bearer = { kind = "env", name = "X_BEARER_TOKEN" }
 
 [tools]
@@ -47,6 +48,8 @@ git = "/usr/bin/git"
 pdfinfo = "/usr/bin/pdfinfo"
 pdftotext = "/usr/bin/pdftotext"
 bubblewrap = "/usr/bin/bwrap"
+# Optional pinned native Chromium/Chrome binary under /usr or /opt/google/chrome.
+browser = "/usr/bin/chromium"
 yt_dlp = "/home/YOUR_USER/.local/bin/yt-dlp"
 md2audio = "/home/YOUR_USER/.local/bin/md2audio"
 hymt_bridge = "/home/YOUR_USER/.local/bin/archive-hymt-bridge"

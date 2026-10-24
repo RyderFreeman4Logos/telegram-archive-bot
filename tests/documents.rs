@@ -115,6 +115,56 @@ async fn html_and_threadreader_keep_markdown_and_raw_provenance() -> Result<()> 
 }
 
 #[tokio::test]
+async fn verification_login_and_browser_error_pages_are_not_article_text() -> Result<()> {
+    let (_dir, adapter) = fixture()?;
+    for html in [
+        "<html><title>Just a moment...</title><body><h1>Checking your browser before accessing the site</h1><form id='challenge-form'><div class='g-recaptcha'></div></form><p>Please wait while we verify your browser.</p></body></html>",
+        "<html><title>Sign in</title><body><h1>Sign in to continue</h1><form><input type='password'></form></body></html>",
+        "<html><body class='neterror'><div id='main-frame-error'><h1>This site cannot be reached</h1><p>ERR_CONNECTION_REFUSED</p></div></body></html>",
+    ] {
+        let result = adapter
+            .response(
+                response("https://example.org/article", "text/html", html.as_bytes()),
+                &CancellationToken::new(),
+            )
+            .await?;
+        assert!(
+            result.capture.content.is_none(),
+            "interstitial must not feed summary or speech"
+        );
+        assert!(matches!(
+            result.capture.status,
+            FetchStatus::Forbidden | FetchStatus::Error
+        ));
+        assert!(result.text_digest.is_none() && !result.original.validated);
+        assert_eq!(
+            adapter.store.read_blob(&result.original.digest, 10000)?,
+            html.as_bytes()
+        );
+    }
+    let prose = "This article explains checking your browser and how a sign in form differs from a captcha. ".repeat(30);
+    let html = format!(
+        "<html><title>Browser verification explained</title><body><article><h1>Browser verification explained</h1><p>{prose}</p></article><form><input type='password'></form></body></html>"
+    );
+    let result = adapter
+        .response(
+            response("https://example.org/guide", "text/html", html.as_bytes()),
+            &CancellationToken::new(),
+        )
+        .await?;
+    assert_eq!(result.capture.status, FetchStatus::Complete);
+    assert!(
+        result
+            .capture
+            .content
+            .unwrap()
+            .body
+            .contains(prose.trim_end())
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn unicode_attachments_encoding_isolation_and_bounds() -> Result<()> {
     let (_dir, mut adapter) = fixture()?;
     let cancel = CancellationToken::new();
@@ -152,6 +202,37 @@ async fn unicode_attachments_encoding_isolation_and_bounds() -> Result<()> {
             .await
             .is_err()
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn empty_http_body_is_retained_without_a_text_revision() -> Result<()> {
+    let (_dir, adapter) = fixture()?;
+    let extracted = adapter
+        .response(
+            response("https://example.org/empty", "text/html", b""),
+            &CancellationToken::new(),
+        )
+        .await?;
+    assert_eq!(extracted.capture.status, FetchStatus::Error);
+    assert!(extracted.capture.content.is_none() && extracted.text_digest.is_none());
+    assert!(!extracted.original.validated);
+    assert_eq!(extracted.capture.evidence["http_status"], 200);
+    assert!(
+        adapter
+            .store
+            .read_blob(&extracted.original.digest, 1)?
+            .is_empty()
+    );
+    let local = adapter
+        .attachment(
+            "local",
+            "article.md",
+            b"Local text",
+            &CancellationToken::new(),
+        )
+        .await?;
+    assert!(local.capture.evidence["http_status"].is_null());
     Ok(())
 }
 

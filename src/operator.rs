@@ -89,7 +89,13 @@ pub async fn doctor(config: &Config, store: &Store, cancel: &CancellationToken) 
         (
             "bubblewrap",
             &config.tools.bubblewrap,
-            config.sources.media_enabled,
+            config.sources.media_enabled || config.sources.browser_enabled,
+            "--version",
+        ),
+        (
+            "browser",
+            &config.tools.browser,
+            config.sources.browser_enabled,
             "--version",
         ),
         (
@@ -113,7 +119,13 @@ pub async fn doctor(config: &Config, store: &Store, cancel: &CancellationToken) 
         ("pdfinfo", &config.tools.pdfinfo, false, "-v"),
         ("pdftotext", &config.tools.pdftotext, false, "-v"),
     ] {
-        let identity = crate::transforms::executable(path).ok();
+        let identity = if name == "browser" {
+            crate::browser::system_path(path)
+                .and_then(|path| crate::transforms::executable(&path))
+                .ok()
+        } else {
+            crate::transforms::executable(path).ok()
+        };
         let mut item = json!({"enabled":enabled,"identity":identity,"available":identity.is_some(),"diagnosis":if identity.is_some(){"present"}else if enabled{"enabled-feature-missing-tool"}else{"optional-feature-unavailable"}});
         if identity.is_some() {
             let result = Tool {
@@ -152,7 +164,7 @@ pub async fn doctor(config: &Config, store: &Store, cancel: &CancellationToken) 
         }
         tools.insert(name, item);
     }
-    let namespace = if config.sources.media_enabled {
+    let namespace = if config.sources.media_enabled || config.sources.browser_enabled {
         Some(
             Tool {
                 executable: config.tools.bubblewrap.clone(),
@@ -230,6 +242,6 @@ pub async fn doctor(config: &Config, store: &Store, cancel: &CancellationToken) 
         .connection()?
         .pragma_query_value(None, "user_version", |r| r.get(0))?;
     Ok(
-        json!({"schema_version":1,"application_version":env!("CARGO_PKG_VERSION"),"ready":ready,"network_probes_performed":false,"telegram_messages_sent":0,"secrets_resolvable":secret_ready,"database_schema":schema,"integrity_passed":integrity.is_ok(),"free_bytes":free,"minimum_work_headroom":config.limits.work_bytes,"tools":tools,"encoders":encoders,"media_namespace_probe_passed":namespace,"effective":{"config_fingerprint":config.fingerprint()?,"model_enabled":config.model.enabled,"translation_enabled":config.translation.enabled,"synthesis_enabled":config.synthesis.enabled,"synthesis_provider":if config.synthesis.local{config.synthesis.local_model.as_str()}else{"edge"},"media_enabled":config.sources.media_enabled,"x_enabled":config.sources.x_enabled,"x_fallback_enabled":config.sources.x_fallback_enabled,"archive_enabled":config.archive.directory.is_some(),"push_enabled":config.archive.push,"narration_mode":config.telegram.narration_mode,"limits":config.limits},"metrics":metrics(store)?}),
+        json!({"schema_version":1,"application_version":env!("CARGO_PKG_VERSION"),"ready":ready,"network_probes_performed":false,"telegram_messages_sent":0,"secrets_resolvable":secret_ready,"database_schema":schema,"integrity_passed":integrity.is_ok(),"free_bytes":free,"minimum_work_headroom":config.limits.work_bytes,"tools":tools,"encoders":encoders,"media_namespace_probe_passed":if config.sources.media_enabled { namespace } else { None },"browser_namespace_probe_passed":if config.sources.browser_enabled { namespace } else { None },"effective":{"config_fingerprint":config.fingerprint()?,"model_enabled":config.model.enabled,"translation_enabled":config.translation.enabled,"synthesis_enabled":config.synthesis.enabled,"synthesis_provider":if config.synthesis.local{config.synthesis.local_model.as_str()}else{"edge"},"media_enabled":config.sources.media_enabled,"browser_enabled":config.sources.browser_enabled,"x_enabled":config.sources.x_enabled,"x_fallback_enabled":config.sources.x_fallback_enabled,"archive_enabled":config.archive.directory.is_some(),"push_enabled":config.archive.push,"narration_mode":config.telegram.narration_mode,"limits":config.limits},"metrics":metrics(store)?}),
     )
 }
