@@ -1,9 +1,12 @@
 # Release candidate verification
 
-Current target: **0.1.0-rc.2**. Its release verification assets bind the final
-source commit/tree, eight-command gate, independent review, Cargo-installed
-executables, runtime activation and downloaded asset hashes. The same archive
-records the frozen private-corpus counts, corrections, integrity/reuse checks,
+Current target: **0.1.0-rc.2**. At this pre-publication source snapshot, final
+RC2 installation/runtime attestation, the full main-corpus Git export/restore,
+asset publication and download verification remain pending. Required release
+verification assets must bind the final source commit/tree, eight-command gate,
+independent review, Cargo-installed executables and runtime activation. A
+post-publication receipt must verify the downloaded assets. The release archive
+must record frozen private-corpus counts, corrections, integrity/reuse checks,
 Git export/restore and storage measurements without publishing private inputs.
 See [RC2 notes](../release-notes-0.1.0-rc.2.md) and
 [legacy parity](../legacy-parity.md). Prior provider receipts retain their source

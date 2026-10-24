@@ -12,7 +12,7 @@ An implemented path is not evidence that every live source can be recovered.
 
 | Legacy behavior / entry | Rust path | Evidence and limits |
 | --- | --- | --- |
-| Multiple submitted URLs, `process_url` | `telegram::parse_requests`, durable child jobs | Frozen input accounting and source-bound corpus outcomes in release verification assets |
+| Multiple submitted URLs, `process_url` | `telegram::parse_requests`, durable child jobs | Frozen input accounting and source-bound corpus outcomes retained privately; final release-asset publication pending |
 | Web article extraction, `scrape_with_trafilatura` | `Documents`, Readability + HTML-to-Markdown with marked fallback | Retained HTML triage and corrective replay; no claim of human semantic completeness |
 | ThreadReader container, `scrape_threadreader` | Explicit `.threadreader-content` extraction | Explicit extraction fixture and per-input corpus results |
 | X quotes/replies/reposts/articles, `scrape_twitter` | `XGraph`, official API and opt-in FxEmbed hydration | Final article eligibility audit and real fallback evidence; official bearer unavailable |
@@ -24,14 +24,14 @@ An implemented path is not evidence that every live source can be recovered.
 | Optional Chinese translation, `translate_markdown` | Pinned hymt bridge, separate immutable derivative and document | Controlled operation/output tests and prior live provider receipts; current client presentation unobserved |
 | Title/summary and descriptive filename, `generate_article_enhancement` | ADK metadata, bounded filename, generated summary in delivery; dedicated `/summarize` output | Controlled operation/output tests and prior live provider receipts; current client presentation unobserved |
 | Cached article resend | Durable outputs and `/get JOB` | Controlled cached resend and operation-scoping checks; actual historical client roundtrip unobserved |
-| Separate Git export and optional push | Semantic projection and independent push cursor | Real local corpus export/restore and controlled remote fixtures are separate; real remote push untested |
+| Separate Git export and optional push | Semantic projection and independent push cursor | Supplemental corpus export/restore passed at its recorded source; full main-corpus export/restore pending; controlled remote fixtures passed, real remote push untested |
 | CLI single URL, `--url` | Scoped durable operator capture, no Telegram polling/sending | [Public CLI and installed execution](verification/operator-input.md) passed at their recorded source revisions |
 | Batch summary of local files, `summary` | Read-only CAS ingestion, argument/stdin paths, renamed copies, optional Git and Telegram | [Repeat/recovery and preservation](verification/operator-input.md) fixtures and installed execution passed |
 | Processing/failure feedback, `send_message` | New durable admission/failure notices | Durable outbox/retry fixtures passed; actual current-client feedback remains unobserved |
 | Replies to initiating message, `reply_to` | New persisted origin and Bot API `reply_parameters` | JSON/multipart/restart fixtures passed; current user-client association unobserved |
 | Configuration reload, `load_config` | Validated SIGHUP activation, immutable running-job snapshots | Immutable operation selection and reload/refresh fixtures passed |
 | Restart/network retry and authorization | Service lock, persisted cursor, bounded job retries, chat + user allowlists | Source-bound recovery/authorization fixtures and separate runtime activation receipts |
-| Requested historical reply commands | `/translate`, `/tts`, `/summarize`, `/start` | Source scoping and operation identity fixtures, exact-source gates, installation and deployment; user-client roundtrip unobserved |
+| Requested historical reply commands | `/translate`, `/tts`, `/summarize`, `/start` | Source scoping and operation identity fixtures passed at recorded revisions; final RC2 installation/runtime attestation pending; user-client roundtrip unobserved |
 
 The batch campaigns retain each run's exact executable digest, private canonical storage and
 disabled Telegram sends/Git pushes. Model generation, translation and narration

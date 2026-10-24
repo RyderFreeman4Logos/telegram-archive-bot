@@ -12,8 +12,9 @@ and legacy import (F22) are optional. This repository has fresh history and
 contains no prior bot implementation or archive data.
 
 Read the [release notes](docs/release-notes-0.1.0-rc.2.md) and
-[RC1 provider/client evidence](docs/verification/f20.md) and the source-bound
-verification assets attached to the release before activation.
+[RC1 provider/client evidence](docs/verification/f20.md) before activation. RC2
+publication requires source-bound verification assets; their final preparation
+is pending at this source snapshot.
 The RC1 real model/translation/TTS, download and three Telegram audio checks passed;
 Desktop seeking and speed controls remain blocked by client access; Android
 playback is pending confirmation of the phone's test recipient.

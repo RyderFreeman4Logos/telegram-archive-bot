@@ -35,19 +35,24 @@ browser/error runs preserve the original attempts. Repeated input reuse and
 integrity are checked independently. A completed job, HTTP 200 or retained body
 is not proof of human-reviewed semantic completeness.
 
-The release's `release-verification.json` and verification archive contain the
-final source-bound gate, review, installed/runtime identity and sanitized corpus
-accounting. Each historical run keeps its actual executable digest; results are
-not reassigned to a newer binary. Raw URLs, private bodies, filenames, credentials
-and recipient identifiers are excluded from public assets. Prior failed receipts
-remain in the private evidence store.
+At this pre-publication source snapshot, final RC2 installation/runtime
+attestation, the full main-corpus Git export/restore, asset publication and
+download verification remain pending. Publication requires a
+`release-verification.json` and verification archive with the final source-bound
+gate, review, installed/runtime identity and sanitized corpus accounting. A
+post-publication receipt must separately verify the downloaded assets. Each
+historical run keeps its actual executable digest; results must not be reassigned
+to a newer binary. Public assets must exclude raw URLs, private bodies, filenames,
+credentials and recipient identifiers. Prior failed receipts remain in the
+private evidence store.
 
 ## Installation and rollback
 
-Follow [installation and operation](operations.md). The application package uses version 0.1.0-rc.2; the unchanged pinned hymt
-bridge retains version 0.1.0-rc.1 and its separately attested executable. The prebuilt Linux x86_64 pair inherits the build host's
+Follow [installation and operation](operations.md). The application package uses
+version 0.1.0-rc.2; the unchanged pinned hymt bridge retains version 0.1.0-rc.1
+and its separately attested executable. The planned Linux x86_64 pair inherits the build host's
 `target-cpu=native` for Intel Alder Lake; use Cargo source installation on other
-CPUs. External tools are installed separately. The release includes notices,
+CPUs. External tools are installed separately. Publication must include notices,
 dependency inventories and the applicable MPL dependency source archive.
 
 Take and verify a full backup before opening existing state. Migrations are
@@ -67,7 +72,7 @@ under [issue #41](https://github.com/RyderFreeman4Logos/telegram-archive-bot/iss
 Desktop lacks an authorized graphical session; the unlocked Android account
 differs from the allowed recipient and adding it awaits confirmation. Historical
 reply handling has controlled Bot API coverage; an actual user-client roundtrip
-is separately recorded and is not inferred from those fixtures.
+remains unobserved and requires a separate receipt.
 
 Official X API acceptance lacks its bearer credential. Public fallback success
 does not supply that credential or guarantee all posts/articles. One selected
