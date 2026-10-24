@@ -8,6 +8,16 @@ second busy timeout, foreign keys on every connection, and versioned transaction
 STRICT migrations. A newer schema is rejected. No external work runs inside a
 SQLite write transaction.
 
+Clones of a store reuse up to eight idle connections. Active operations retain
+exclusive ownership of their connection; this idle limit does not cap worker
+concurrency. Dropping an unfinished transaction closes that connection instead
+of returning it to another worker. Keeping idle connections open avoids repeated
+WAL checkpoints between short operations. FULL synchronization and the existing
+backup, restore and publication fences remain in force.
+
+The [connection reuse measurement](verification/storage-performance.md) records
+the public replay comparison and its limits.
+
 `archive.sqlite` owns canonical text and operational records. `blobs/<sha256>`
 owns immutable retained bytes. `staging/` holds incomplete publications. A blob
 catalogue entry proves byte durability only; a media artifact additionally needs
