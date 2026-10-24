@@ -24,10 +24,16 @@ absolute entry points**, including an interpreter environment with dependencies;
 a shell-manager shim requiring interactive startup is not a service executable.
 Doctor records resolved executable hashes and version/help output. The bridge
 links pinned hymt Rust libraries directly; no hymt CLI is used. Optional missing
-executables disable their requested synthesis, translation or media feature at
+executables disable their requested synthesis, translation, browser or media feature at
 service startup with a `capability_disabled` event. Invalid required configuration,
 unreadable configured secrets or a configured unavailable Git destination still
 fail early. PDF extraction can fail partially while retaining a usable PDF.
+
+For optional JavaScript rendering, deliberately install and pin Chromium or
+Chrome, configure its native executable and enable `sources.browser_enabled`.
+Only `/usr` and `/opt/google/chrome` browser installations fit the supported
+runtime mounts. No user profile is exposed. See [document extraction](documents.md)
+for the network, profile and provenance limits.
 
 ## Reproducible offline workflow
 
@@ -111,7 +117,7 @@ cancel work, and drain within the configured shutdown budget; supervised tools
 kill/reap process groups. `KillMode=control-group` additionally lets systemd kill
 remaining descendants at `TimeoutStopSec=30`. If increasing `shutdown_seconds`,
 increase `TimeoutStopSec` accordingly. The unit needs unprivileged namespaces
-for media; production code never changes host AppArmor/sysctl policy.
+for media and browser rendering; production code never changes host AppArmor/sysctl policy.
 
 ## Reload, upgrade and rollback
 

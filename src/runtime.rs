@@ -777,6 +777,13 @@ fn disable_missing_optional(config: &mut Config) {
                 && available(&config.tools.ffmpeg)
                 && available(&config.tools.ffprobe),
         ),
+        (
+            "browser",
+            &mut config.sources.browser_enabled,
+            crate::browser::system_path(&config.tools.browser).is_ok()
+                && available(&config.tools.browser)
+                && available(&config.tools.bubblewrap),
+        ),
     ] {
         if *enabled && !present {
             *enabled = false;

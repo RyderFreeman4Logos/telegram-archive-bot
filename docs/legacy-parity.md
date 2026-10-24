@@ -17,7 +17,7 @@ An implemented path is not evidence that every live source can be recovered.
 | ThreadReader container, `scrape_threadreader` | Explicit `.threadreader-content` extraction | Corpus outcomes |
 | X quotes/replies/reposts/articles, `scrape_twitter` | `XGraph`, official API and opt-in FxEmbed hydration | Compare article-body coverage; official bearer unavailable |
 | Guest GraphQL article enrichment | FxEmbed currently supplies hydrated article bodies | Audit any remaining preview-only cases and the missing fallback |
-| JavaScript-rendered pages, `scrape_with_autocli` | No browser renderer in the initial release | Implement an isolated equivalent; client/tool availability must be measured |
+| JavaScript-rendered pages, `scrape_with_autocli` | Opt-in Chromium renderer with private profile and public-only proxy | Installed browser execution and real corpus reruns; no authenticated host profile |
 | Original PDF even when text extraction fails, `scrape_pdf` | Validated original retention and independent delivery, Poppler extraction | Live corpus and matching configured size limits |
 | Audio/video links, `handle_audio_url` | Supervised yt-dlp + full audio validation, including Xiaoyuzhou routing | Corpus/live results |
 | Uploaded Markdown/text narration, `handle_text_document` | Telegram file download, canonical source, md2audio, validated audio | Historical reply-file live test |

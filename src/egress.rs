@@ -247,15 +247,19 @@ pub async fn relay(
     socket: PathBuf,
     executable: PathBuf,
     args: Vec<std::ffi::OsString>,
+    browser: bool,
 ) -> Result<i32> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let proxy = format!("http://{}", listener.local_addr()?);
-    let mut child = tokio::process::Command::new(executable)
-        .arg("--proxy")
-        .arg(proxy)
-        .args(args)
-        .kill_on_drop(true)
-        .spawn()?;
+    let mut command = tokio::process::Command::new(executable);
+    if browser {
+        command
+            .arg(format!("--proxy-server={proxy}"))
+            .arg("--proxy-bypass-list=<-loopback>");
+    } else {
+        command.arg("--proxy").arg(proxy);
+    }
+    let mut child = command.args(args).kill_on_drop(true).spawn()?;
     let mut connections = JoinSet::new();
     let status = loop {
         tokio::select! {

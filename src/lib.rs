@@ -1,4 +1,5 @@
 pub mod audio;
+mod browser;
 pub mod commands;
 pub mod config;
 pub mod delivery;
