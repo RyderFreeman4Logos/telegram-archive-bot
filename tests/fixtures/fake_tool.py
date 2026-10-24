@@ -13,14 +13,20 @@ if mode == "args":
     print(json.dumps(sys.argv[2:]))
 elif mode == "env":
     print(json.dumps(dict(os.environ)))
-elif mode == "spawn":
+elif mode in {"spawn", "orphan"}:
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     child = subprocess.Popen([
         sys.executable, "-c",
-        "import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(600)",
+        "import signal,time;from pathlib import Path;signal.signal(signal.SIGTERM,signal.SIG_IGN);Path('child.ready').touch();time.sleep(600)",
     ])
+    deadline = time.monotonic() + 3
+    while not Path("child.ready").exists():
+        assert time.monotonic() < deadline, "child did not install its signal handler"
+        time.sleep(0.01)
     Path("child.pid").write_text(str(child.pid))
     Path("parent.pid").write_text(str(os.getpid()))
+    if mode == "orphan":
+        sys.exit(0)
     time.sleep(600)
 elif mode == "flood":
     while True:

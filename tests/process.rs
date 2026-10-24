@@ -115,6 +115,19 @@ async fn cancellation_kills_and_reaps_process_group_including_term_resistant_chi
 }
 
 #[tokio::test]
+async fn successful_parent_still_terminates_and_reaps_resistant_descendant() -> Result<()> {
+    let (_dir, store) = store()?;
+    let work = store.workspace("orphan")?;
+    let output = tool(work.path(), "orphan")
+        .run(&CancellationToken::new())
+        .await?;
+    assert_eq!(output.exit_code, Some(0));
+    let child = fs::read_to_string(work.path().join("child.pid"))?;
+    assert!(!Path::new("/proc").join(child).exists());
+    Ok(())
+}
+
+#[tokio::test]
 async fn output_disk_timeout_exit_and_missing_tools_are_distinct() -> Result<()> {
     let (_dir, store) = store()?;
     for (mode, expected) in [
