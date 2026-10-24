@@ -1,7 +1,20 @@
-# Release candidate checklist
+# Release candidate verification
+
+Current target: **0.1.0-rc.2**. At this pre-publication source snapshot, final
+RC2 installation/runtime attestation, the full main-corpus Git export/restore,
+asset publication and download verification remain pending. Required release
+verification assets must bind the final source commit/tree, eight-command gate,
+independent review, Cargo-installed executables and runtime activation. A
+post-publication receipt must verify the downloaded assets. The release archive
+must record frozen private-corpus counts, corrections, integrity/reuse checks,
+Git export/restore and storage measurements without publishing private inputs.
+See [RC2 notes](../release-notes-0.1.0-rc.2.md) and
+[legacy parity](../legacy-parity.md). Prior provider receipts retain their source
+identities; client/credential limits are not converted into passing checks.
 
 Project-Spec: `rust-telegram-archive-bot-v1`. Target: `0.1.0-rc.1`.
-This is the active acceptance ledger, not a production-validation claim.
+The checklist below is the historical RC1 source ledger. RC1 publication is
+verified by the release assets; unchecked client controls remain tracked in #41.
 
 ## Remaining work
 
