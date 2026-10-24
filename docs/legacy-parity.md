@@ -16,7 +16,7 @@ An implemented path is not evidence that every live source can be recovered.
 | Web article extraction, `scrape_with_trafilatura` | `Documents`, Readability + HTML-to-Markdown with marked fallback | Compare real retained text and partial captures |
 | ThreadReader container, `scrape_threadreader` | Explicit `.threadreader-content` extraction | Corpus outcomes |
 | X quotes/replies/reposts/articles, `scrape_twitter` | `XGraph`, official API and opt-in FxEmbed hydration | Compare article-body coverage; official bearer unavailable |
-| Guest GraphQL article enrichment | FxEmbed currently supplies hydrated article bodies | Audit any remaining preview-only cases and the missing fallback |
+| Guest GraphQL article enrichment | Opt-in article-only guest provider after official/FxEmbed evidence | [Real provider capture and limitations](verification/x-guest.md); final corpus coverage difference remains separate |
 | JavaScript-rendered pages, `scrape_with_autocli` | Opt-in Chromium renderer with private profile and public-only proxy | Installed browser execution and real corpus reruns; no authenticated host profile |
 | Original PDF even when text extraction fails, `scrape_pdf` | Validated original retention and independent delivery, Poppler extraction | Live corpus and matching configured size limits |
 | Audio/video links, `handle_audio_url` | Supervised yt-dlp + full audio validation, including Xiaoyuzhou routing | Corpus/live results |

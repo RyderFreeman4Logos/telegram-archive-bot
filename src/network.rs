@@ -95,7 +95,34 @@ impl PublicHttp {
         bearer: Option<&str>,
         cancel: &CancellationToken,
     ) -> Result<Response, Failure> {
-        let request = self.get_inner(input, max_bytes, bearer);
+        let mut headers = reqwest::header::HeaderMap::new();
+        if let Some(bearer) = bearer {
+            let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {bearer}"))
+                .map_err(|_| Failure::InvalidInput)?;
+            value.set_sensitive(true);
+            headers.insert(reqwest::header::AUTHORIZATION, value);
+        }
+        self.request(
+            input,
+            reqwest::Method::GET,
+            headers,
+            max_bytes,
+            timeout,
+            cancel,
+        )
+        .await
+    }
+
+    pub(crate) async fn request(
+        &self,
+        input: &str,
+        method: reqwest::Method,
+        headers: reqwest::header::HeaderMap,
+        max_bytes: u64,
+        timeout: Duration,
+        cancel: &CancellationToken,
+    ) -> Result<Response, Failure> {
+        let request = self.request_inner(input, method, headers, max_bytes);
         tokio::select! {biased;
             _=cancel.cancelled()=>Err(Failure::Cancelled),
             result=tokio::time::timeout(timeout,request)=>result.map_err(|_|Failure::Timeout)?,
@@ -113,16 +140,20 @@ impl PublicHttp {
             .collect())
     }
 
-    async fn get_inner(
+    async fn request_inner(
         &self,
         input: &str,
+        method: reqwest::Method,
+        headers: reqwest::header::HeaderMap,
         max_bytes: u64,
-        bearer: Option<&str>,
     ) -> Result<Response, Failure> {
         let submitted = source_url(input)?;
         let mut url = submitted.clone();
         let mut redirects = vec![];
         loop {
+            if !headers.is_empty() && url.origin() != submitted.origin() {
+                return Err(Failure::InvalidInput);
+            }
             let host = url
                 .host_str()
                 .ok_or(Failure::InvalidInput)?
@@ -147,13 +178,9 @@ impl PublicHttp {
                 .user_agent(concat!("telegram-archive-bot/", env!("CARGO_PKG_VERSION")))
                 .build()
                 .map_err(|_| Failure::Internal)?;
-            let mut request = client.get(url.clone());
-            if let Some(token) = bearer {
-                if url.origin() != submitted.origin() {
-                    return Err(Failure::InvalidInput);
-                }
-                request = request.bearer_auth(token);
-            }
+            let request = client
+                .request(method.clone(), url.clone())
+                .headers(headers.clone());
             let response = request.send().await.map_err(|e| {
                 if e.is_timeout() {
                     Failure::Timeout
@@ -163,7 +190,7 @@ impl PublicHttp {
             })?;
             let status = response.status();
             if matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308) {
-                if redirects.len() >= 5 {
+                if method != reqwest::Method::GET || redirects.len() >= 5 {
                     return Err(Failure::InvalidInput);
                 }
                 let location = response
@@ -287,6 +314,49 @@ mod tests {
         ] {
             let (http, server) = fixture(reply).await;
             assert!(matches!(http.get("http://fixture.invalid/start", 100, Duration::from_secs(2), bearer, &cancel).await, Err(Failure::InvalidInput)));
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn guest_headers_cannot_cross_origins_and_activation_never_redirects() {
+        for (method, location) in [
+            (reqwest::Method::GET, "http://another.invalid/query"),
+            (reqwest::Method::POST, "http://fixture.invalid/other"),
+        ] {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let http = PublicHttp::fixture_to(listener.local_addr().unwrap());
+            let expected = method.to_string();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buffer = [0; 4096];
+                let length = socket.read(&mut buffer).await.unwrap();
+                let request = String::from_utf8_lossy(&buffer[..length]);
+                assert!(request.starts_with(&expected));
+                assert!(request.contains("x-guest-token: synthetic-guest"));
+                let response = format!(
+                    "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            });
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert(
+                "x-guest-token",
+                reqwest::header::HeaderValue::from_static("synthetic-guest"),
+            );
+            assert!(matches!(
+                http.request(
+                    "http://fixture.invalid/query",
+                    method,
+                    headers,
+                    100,
+                    Duration::from_secs(2),
+                    &CancellationToken::new()
+                )
+                .await,
+                Err(Failure::InvalidInput)
+            ));
             server.await.unwrap();
         }
     }

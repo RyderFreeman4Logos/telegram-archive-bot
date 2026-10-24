@@ -37,6 +37,8 @@ language = "zh"
 [sources]
 x_enabled = false
 x_fallback_enabled = false
+x_guest_enabled = false
+# x_guest_bearer = { kind = "file", name = "/private/x-public-web-client-bearer" }
 media_enabled = false
 browser_enabled = false
 # x_bearer = { kind = "env", name = "X_BEARER_TOKEN" }

@@ -39,6 +39,18 @@ user environment are unsuitable. Bubblewrap and its namespace support are
 required. Doctor reports browser availability separately. The browser uses a
 fresh profile and never imports host cookies or login sessions.
 
+`sources.x_guest_enabled` optionally enriches an evidenced X Article preview when
+the enabled official/FxEmbed provider has not supplied its body. It requires
+`sources.x_guest_bearer`, a secret reference to the public web-client bearer,
+and at least one of `x_enabled` or `x_fallback_enabled`. Ordinary posts and already
+hydrated articles do not invoke it. This is separate from the official X API
+bearer and does not establish access to private posts. The pinned guest query can
+become unavailable when the upstream web API changes; denial remains explicit.
+Restart the service after rotating this bearer file so the cached provider is
+reconstructed. Guest tokens are reused for up to one hour and remain in memory
+until the next fetch replaces an expired token or the provider is dropped. One
+rejected token refresh is allowed within the same request byte and time budget.
+
 Local TTS plus multiple speakers is rejected. Speakers are explicit resolved
 voice assignments, not random choices at execution. Speech defaults to Chinese
 voice notes, speed 1.0. Raw synthesis and finalized delivery are separate
