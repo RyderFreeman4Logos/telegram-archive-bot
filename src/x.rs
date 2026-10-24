@@ -18,6 +18,9 @@ use std::{
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
+#[path = "x_guest.rs"]
+mod guest;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Post {
     pub id: String,
@@ -44,6 +47,9 @@ impl Post {
 
 pub trait Provider: Send + Sync {
     fn name(&self) -> &'static str;
+    fn article_only(&self) -> bool {
+        false
+    }
     fn fetch<'a>(
         &'a self,
         id: &'a str,
@@ -260,6 +266,7 @@ pub fn parse_fx(id: &str, payload: &Value) -> Result<Post, Failure> {
     let mut title = None;
     let mut status = FetchStatus::Complete;
     let mut limitations = vec![];
+    let mut article_hydrated = false;
     let article = &data["article"];
     if !article.is_null() {
         title = text(article, "title");
@@ -283,8 +290,10 @@ pub fn parse_fx(id: &str, payload: &Value) -> Result<Post, Failure> {
                     status = FetchStatus::Partial;
                     limitations.push("article_nontext_entity_retained_only_in_raw");
                 } else if block["type"] == "code-block" {
+                    article_hydrated |= !text.trim().is_empty();
                     rendered.push(format!("```\n{text}\n```"));
                 } else {
+                    article_hydrated |= !text.trim().is_empty();
                     rendered.push(format!("{prefix}{text}"));
                 }
             }
@@ -293,6 +302,7 @@ pub fn parse_fx(id: &str, payload: &Value) -> Result<Post, Failure> {
                     if entity["value"]["type"] == "MARKDOWN"
                         && let Some(markdown) = entity["value"]["data"]["markdown"].as_str()
                     {
+                        article_hydrated |= !markdown.trim().is_empty();
                         rendered.push(markdown.into());
                     }
                 }
@@ -309,6 +319,12 @@ pub fn parse_fx(id: &str, payload: &Value) -> Result<Post, Failure> {
             if let Some(preview) = article["preview_text"].as_str() {
                 body.push_str(&format!("\n\n{preview}"));
             }
+        }
+    }
+    if (!article.is_null() || body.contains("/article/")) && !article_hydrated {
+        status = FetchStatus::Partial;
+        if !limitations.contains(&"article_preview_only") {
+            limitations.push("article_preview_only");
         }
     }
     if body.trim().is_empty() {
@@ -350,7 +366,7 @@ pub fn parse_fx(id: &str, payload: &Value) -> Result<Post, Failure> {
         status,
         relations,
         previews,
-        evidence: json!({"likes":data["likes"],"views":data["views"],"limitations":limitations,"article_hydrated":!article["content"]["blocks"].is_null()}),
+        evidence: json!({"likes":data["likes"],"views":data["views"],"limitations":limitations,"article_hydrated":article_hydrated}),
         raw: vec![],
     })
 }
@@ -469,6 +485,19 @@ impl XGraph {
                 timeout,
             }));
         }
+        if config.sources.x_guest_enabled {
+            let bearer = config
+                .sources
+                .x_guest_bearer
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("guest bearer reference missing"))?
+                .read()?;
+            providers.push(Arc::new(guest::Guest::new(
+                PublicHttp::default(),
+                bearer,
+                timeout,
+            )));
+        }
         anyhow::ensure!(!providers.is_empty(), "no X provider configured");
         Ok(Self::new(providers))
     }
@@ -503,9 +532,21 @@ impl XGraph {
             }
             return Ok(posts);
         }
-        let mut posts = vec![];
+        let mut posts: Vec<(String, Post)> = vec![];
         let mut bytes = 0u64;
         for provider in &self.providers {
+            if provider.article_only()
+                && (!posts.iter().any(|(_, p)| {
+                    p.evidence["limitation"] == "article_link_requires_fallback_hydration"
+                        || p.evidence["limitations"]
+                            .as_array()
+                            .is_some_and(|v| v.iter().any(|v| v == "article_preview_only"))
+                }) || posts
+                    .iter()
+                    .any(|(_, p)| p.evidence["article_hydrated"] == true))
+            {
+                continue;
+            }
             let mut post = match provider
                 .fetch(id, max_bytes.saturating_sub(bytes), cancel)
                 .await

@@ -26,6 +26,9 @@ impl Provider for Fake {
     fn name(&self) -> &'static str {
         self.name
     }
+    fn article_only(&self) -> bool {
+        self.name == "guest-only"
+    }
     fn fetch<'a>(
         &'a self,
         id: &'a str,
@@ -38,6 +41,51 @@ impl Provider for Fake {
             self.posts.get(id).cloned().ok_or(Failure::Unavailable)
         }.boxed()
     }
+}
+
+#[tokio::test]
+async fn guest_enrichment_runs_only_for_evidenced_missing_article_body() -> Result<()> {
+    for (evidence, needed) in [
+        (json!({"limitation":"ordinary_partial_post"}), false),
+        (
+            json!({"article_hydrated":true,"limitations":["article_nontext_entity_retained_only_in_raw"]}),
+            false,
+        ),
+        (
+            json!({"article_hydrated":false,"limitations":["article_preview_only"]}),
+            true,
+        ),
+        (
+            json!({"limitation":"article_link_requires_fallback_hydration"}),
+            true,
+        ),
+    ] {
+        let (_dir, store) = store()?;
+        let mut preview = post("100", "Retained preview", vec![]);
+        preview.status = FetchStatus::Partial;
+        preview.evidence = evidence;
+        let primary = fake(vec![preview]);
+        let mut guest = fake(vec![post("100", "Hydrated article", vec![])]);
+        Arc::get_mut(&mut guest).unwrap().name = "guest-only";
+        let graph = XGraph::new(vec![primary, guest.clone()]);
+        let traversal = graph
+            .traverse(
+                &store,
+                "https://x.com/i/status/100",
+                &Config::default(),
+                false,
+                &CancellationToken::new(),
+            )
+            .await?;
+        assert_eq!(
+            guest.calls.lock().unwrap().get("100").copied().unwrap_or(0),
+            u32::from(needed)
+        );
+        assert_eq!(traversal.captures.len(), if needed { 2 } else { 1 });
+        traversal.persist(&store)?;
+        store.integrity()?;
+    }
+    Ok(())
 }
 fn post(id: &str, body: &str, relations: Vec<(&str, RelationKind)>) -> Post {
     Post {
@@ -356,4 +404,28 @@ async fn silent_provider_exhausts_traversal_deadline_and_reports_omission() -> R
     assert_eq!(result.omissions[0].reason, "time_limit");
     assert!(result.captures.is_empty());
     Ok(())
+}
+
+#[test]
+fn article_previews_and_empty_blocks_are_not_hydrated() {
+    for article in [
+        json!({"title":"Preview only","content":{"blocks":[]}}),
+        json!({"title":"Empty text","content":{"blocks":[{"type":"unstyled","text":""}]}}),
+        serde_json::Value::Null,
+    ] {
+        let parsed = parse_fx(
+            "100",
+            &json!({"tweet":{"id":"100","text":"https://x.com/i/article/100","article":article}}),
+        )
+        .unwrap();
+        assert_eq!(parsed.status, FetchStatus::Partial);
+        assert_eq!(parsed.evidence["article_hydrated"], false);
+        assert!(
+            parsed.evidence["limitations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v == "article_preview_only")
+        );
+    }
 }

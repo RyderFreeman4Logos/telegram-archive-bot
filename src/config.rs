@@ -312,6 +312,8 @@ pub struct Sources {
     pub x_bearer: Option<SecretRef>,
     pub x_enabled: bool,
     pub x_fallback_enabled: bool,
+    pub x_guest_enabled: bool,
+    pub x_guest_bearer: Option<SecretRef>,
     pub media_enabled: bool,
     pub browser_enabled: bool,
 }
@@ -467,6 +469,16 @@ impl Config {
                 "X requires a bearer secret reference"
             );
         }
+        if self.sources.x_guest_enabled {
+            ensure!(
+                self.sources.x_guest_bearer.is_some(),
+                "guest article enrichment requires a public web-client bearer reference"
+            );
+            ensure!(
+                self.sources.x_enabled || self.sources.x_fallback_enabled,
+                "guest article enrichment requires an article-detecting provider"
+            );
+        }
         let l = &self.limits;
         ensure!(
             l.input_bytes > 0
@@ -541,6 +553,7 @@ impl Config {
             &self.model.key,
             &self.translation.key,
             &self.sources.x_bearer,
+            &self.sources.x_guest_bearer,
         ]
         .into_iter()
         .flatten()

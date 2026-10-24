@@ -65,3 +65,16 @@ fn authorization_and_invalid_combinations() {
     config.model.endpoint = "https://user:synthetic@example.test".into();
     assert!(config.validate().is_err());
 }
+
+#[test]
+fn guest_enrichment_is_explicit_and_requires_an_article_detector_and_secret_reference() {
+    let mut config = Config::default();
+    assert!(!config.sources.x_guest_enabled && config.sources.x_guest_bearer.is_none());
+    config.sources.x_guest_enabled = true;
+    assert!(config.validate().is_err());
+    config.sources.x_guest_bearer = Some(SecretRef::File("/missing/guest-client-key".into()));
+    assert!(config.validate().is_err());
+    config.sources.x_fallback_enabled = true;
+    config.validate().unwrap();
+    assert!(config.check_secrets().is_err());
+}
