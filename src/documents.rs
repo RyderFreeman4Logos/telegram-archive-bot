@@ -250,11 +250,25 @@ pub fn display_name(input: &str) -> String {
     let name: String = basename
         .chars()
         .filter(|c| !c.is_control() && !matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
-        .take(120)
         .collect();
     let name = name.trim_matches([' ', '.']);
     if name.is_empty() {
         "document".into()
+    } else if name.len() > 200 || name.chars().count() > 120 {
+        let suffix = name
+            .rsplit_once('.')
+            .filter(|(_, extension)| extension.len() <= 16)
+            .map(|(_, extension)| format!(".{extension}"))
+            .unwrap_or_default();
+        let mut bounded = String::new();
+        for character in name.chars().take(120 - suffix.chars().count()) {
+            if bounded.len() + character.len_utf8() > 200 - suffix.len() {
+                break;
+            }
+            bounded.push(character);
+        }
+        bounded.push_str(&suffix);
+        bounded
     } else {
         name.into()
     }

@@ -643,10 +643,40 @@ async fn crash_child() -> Result<()> {
 }
 
 #[tokio::test]
+async fn operator_delivery_leaves_other_jobs_and_expired_attempts_untouched() -> Result<()> {
+    let (_temp, store, first) = fixture()?;
+    let original = store.enqueue_deliveries(&first, &[document(&store)?])?;
+    store.claim_delivery(1, None)?.unwrap();
+    store.connection()?.execute(
+        "UPDATE outbox SET lease_until=0 WHERE id=?1",
+        [&original[0]],
+    )?;
+    let second = add(&store, &config(), 2, "operator selection")?;
+    let selected = store.enqueue_deliveries(&second, &[document(&store)?])?;
+    let server = Server::new(vec!["ok"]).await?;
+    assert!(
+        server
+            .worker(&store, 1)?
+            .send_job(&second.job.id, &CancellationToken::new())
+            .await?
+    );
+    assert_eq!(server.count(), 1);
+    assert_eq!(store.outbox_for(scope(), &selected[0])?.state, "confirmed");
+    assert_eq!(store.outbox_for(scope(), &original[0])?.state, "sending");
+    let state: String = store.connection()?.query_row(
+        "SELECT state FROM delivery_attempts WHERE outbox_id=?1",
+        [&original[0]],
+        |r| r.get(0),
+    )?;
+    assert_eq!(state, "sending");
+    Ok(())
+}
+
+#[tokio::test]
 async fn claim_releases_database_writer_before_waiting_for_publication_lock() -> Result<()> {
     let (_t, store, l) = fixture()?;
     let original = store.enqueue_deliveries(&l, &[document(&store)?])?;
-    store.claim_delivery(1)?.unwrap();
+    store.claim_delivery(1, None)?.unwrap();
     store.connection()?.execute(
         "UPDATE outbox SET lease_until=0 WHERE id=?1",
         [&original[0]],
@@ -655,7 +685,7 @@ async fn claim_releases_database_writer_before_waiting_for_publication_lock() ->
     store.enqueue_deliveries(&next, &[document(&store)?])?;
     let lock = store.publication_lock()?;
     let child = store.clone();
-    let thread = std::thread::spawn(move || child.claim_delivery(1));
+    let thread = std::thread::spawn(move || child.claim_delivery(1, None));
     let mut committed = false;
     for _ in 0..100 {
         if store.outbox_for(scope(), &original[0])?.state == "unknown" {
@@ -770,7 +800,7 @@ fn legacy_sending_rows_without_a_lease_recover_unknown_and_keep_logical_order() 
     conn.pragma_update(None, "user_version", 6)?;
     drop(conn);
     let store = Store::open(temp.path())?;
-    assert!(store.claim_delivery(1)?.is_none());
+    assert!(store.claim_delivery(1, None)?.is_none());
     assert_eq!(store.outbox_for(scope(), "old-send")?.state, "unknown");
     assert_eq!(store.outbox_for(scope(), "old-pending")?.state, "pending");
     assert_eq!(

@@ -342,7 +342,7 @@ impl Store {
         tx.commit()?;
         Ok(())
     }
-    fn claim_delivery(&self, bot: i64) -> Result<Option<Attempt>> {
+    fn claim_delivery(&self, bot: i64, job: Option<&str>) -> Result<Option<Attempt>> {
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if tx.query_row("SELECT EXISTS(SELECT 1 FROM operational_holds)", [], |r| {
@@ -352,9 +352,9 @@ impl Store {
             return Ok(None);
         }
         let time = now();
-        tx.execute("UPDATE delivery_attempts SET state='unknown',finished_at=?1,error='worker_lost' WHERE state='sending' AND outbox_id IN (SELECT id FROM outbox WHERE state='sending' AND (lease_until IS NULL OR lease_until<=?1))",[time])?;
-        tx.execute("UPDATE outbox SET state='unknown',error='worker_lost',lease_until=NULL WHERE state='sending' AND (lease_until IS NULL OR lease_until<=?1)",[time])?;
-        let row=tx.query_row("SELECT o.id,o.job_id,o.attempt,o.payload,c.config,i.chat_id,(SELECT message_id FROM message_origins m WHERE m.bot_id=j.bot_id AND m.update_id=j.update_id) FROM outbox o JOIN jobs j ON j.id=o.job_id JOIN inbox i ON i.bot_id=j.bot_id AND i.update_id=j.update_id JOIN config_snapshots c ON c.id=j.config_id WHERE j.bot_id=?1 AND COALESCE((SELECT until FROM telegram_cooldowns WHERE bot_id=?1),0)<=?2 AND o.state IN ('pending','retryable') AND o.available_at<=?2 AND NOT EXISTS(SELECT 1 FROM outbox earlier WHERE earlier.job_id=o.job_id AND earlier.ordinal>=0 AND earlier.ordinal<o.ordinal AND earlier.state!='confirmed') ORDER BY o.rowid LIMIT 1",params![bot,time],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,u32>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,i64>(5)?,r.get::<_,Option<i64>>(6)?))).optional()?;
+        tx.execute("UPDATE delivery_attempts SET state='unknown',finished_at=?1,error='worker_lost' WHERE state='sending' AND outbox_id IN (SELECT id FROM outbox WHERE state='sending' AND (?2 IS NULL OR job_id=?2) AND (lease_until IS NULL OR lease_until<=?1))",params![time,job])?;
+        tx.execute("UPDATE outbox SET state='unknown',error='worker_lost',lease_until=NULL WHERE state='sending' AND (?2 IS NULL OR job_id=?2) AND (lease_until IS NULL OR lease_until<=?1)",params![time,job])?;
+        let row=tx.query_row("SELECT o.id,o.job_id,o.attempt,o.payload,c.config,i.chat_id,(SELECT message_id FROM message_origins m WHERE m.bot_id=j.bot_id AND m.update_id=j.update_id) FROM outbox o JOIN jobs j ON j.id=o.job_id JOIN inbox i ON i.bot_id=j.bot_id AND i.update_id=j.update_id JOIN config_snapshots c ON c.id=j.config_id WHERE j.bot_id=?1 AND (?3 IS NULL OR o.job_id=?3) AND COALESCE((SELECT until FROM telegram_cooldowns WHERE bot_id=?1),0)<=?2 AND o.state IN ('pending','retryable') AND o.available_at<=?2 AND NOT EXISTS(SELECT 1 FROM outbox earlier WHERE earlier.job_id=o.job_id AND earlier.ordinal>=0 AND earlier.ordinal<o.ordinal AND earlier.state!='confirmed') ORDER BY o.rowid LIMIT 1",params![bot,time,job],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,u32>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,i64>(5)?,r.get::<_,Option<i64>>(6)?))).optional()?;
         let Some((outbox_id, _job_id, number, payload, config, chat_id, reply_to)) = row else {
             tx.commit()?;
             return Ok(None);
@@ -541,10 +541,16 @@ impl DeliveryWorker {
             .map_err(|_| SendError::Unknown)
     }
     pub async fn send_next(&self, cancel: &CancellationToken) -> Result<bool> {
+        self.send_selected(None, cancel).await
+    }
+    pub(crate) async fn send_job(&self, job: &str, cancel: &CancellationToken) -> Result<bool> {
+        self.send_selected(Some(job), cancel).await
+    }
+    async fn send_selected(&self, job: Option<&str>, cancel: &CancellationToken) -> Result<bool> {
         if cancel.is_cancelled() {
             return Ok(false);
         }
-        let Some(a) = self.store.claim_delivery(self.bot_id)? else {
+        let Some(a) = self.store.claim_delivery(self.bot_id, job)? else {
             return Ok(false);
         };
         let prepared = &a.prepared;
