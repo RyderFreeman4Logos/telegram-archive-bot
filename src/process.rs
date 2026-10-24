@@ -383,7 +383,12 @@ impl Tool {
                 .ok()
                 .and_then(|r| r.ok());
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // A reaped tool with no remaining group needs no termination grace.
+        if unsafe { libc::kill(-group, 0) } == 0
+            || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+        {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
         signal_group(group, libc::SIGKILL);
         if status.is_none() {
             status = Some(

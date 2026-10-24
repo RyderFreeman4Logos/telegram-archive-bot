@@ -20,6 +20,12 @@ of ordinary grandchildren after their parent exits. A drop guard also kills the
 group if the future is dropped. Supported trusted tools must retain their process
 group; this is process supervision, not a sandbox for arbitrary hostile programs.
 
+A completed tool skips the termination grace interval only when the kernel
+reports that its process group no longer exists (`ESRCH`). Surviving descendants
+and uncertain liveness retain the grace, kill and reap path. The
+[Git projection measurement](verification/process-exit-performance.md) records
+the effect on short commands.
+
 RLIMIT_FSIZE bounds each output file. A 50 ms scan bounds accepted aggregate
 workspace size and entry count, with a final check after exit; transient growth
 between scans can exceed the configured aggregate threshold and is rejected.
