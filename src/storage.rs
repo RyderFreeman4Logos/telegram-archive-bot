@@ -11,7 +11,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-pub const SCHEMA_VERSION: u32 = 14;
+pub const SCHEMA_VERSION: u32 = 15;
 
 #[derive(Clone, Debug)]
 pub struct Store {
@@ -161,6 +161,9 @@ impl Store {
         }
         if version < 14 {
             tx.execute_batch(include_str!("../migrations/014_daily_planner.sql"))?;
+        }
+        if version < 15 {
+            tx.execute_batch(include_str!("../migrations/015_notion_publication.sql"))?;
         }
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         tx.commit()?;

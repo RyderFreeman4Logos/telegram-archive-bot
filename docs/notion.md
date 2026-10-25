@@ -87,3 +87,77 @@ Offline fixtures exercise the actual child process and JSON/file boundary only.
 They do not contact Notion, prove live workspace authorization or establish
 autonomous publication. Live target/auth and DA06 worker integration remain
 separate acceptance receipts. See [configuration.md](configuration.md) for setup.
+
+## Automatic publication and recovery
+
+**Spec-ID: DA06** — [#73](https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/73).
+`run` starts a separate Notion worker even when Telegram, models, translation and
+TTS are disabled. It also maintains the local outbox while Notion is disabled or
+unconfigured. Source observations, immutable revisions, accounts, activities and
+explicitly saved derived documents enqueue in their canonical transaction.
+Network and child processes run only after the publication attempt commits.
+A per-store OS lock serializes workers and operator controls; it is released on
+process death. No lease expiry is treated as permission to create another page.
+
+Existing canonical records are discovered through durable keyset cursors, at
+most 64 records per worker turn (the public bootstrap API permits 1–256). Empty
+namespaces are marked done; insert triggers cover later intake. Missing tool,
+token or destination never prevents local capture. The first explicit destination
+binds up to 64 previously unbound intents per turn. Once bound, an intent never
+moves when configuration changes. Returning to its original destination resumes
+that destination's backlog. `SIGHUP` cancels and settles an in-flight operation
+before using the new Notion configuration. An operation that may already have
+written remains uncertain; disabling does not erase that evidence.
+
+The outbox pins the full versioned record, deterministic publication key,
+canonical expected body digest and destination before dispatch. Attempts,
+known page ID, append/readback progress and verified block IDs are durable.
+Source observation documents retain metadata, evidence and typed relations;
+revision documents contain the exact source text. Source capture times use
+explicit Unix-second decimal strings from SQLite, while DA01 event/source time
+evidence remains in its original typed envelope. Unknown times are not guessed.
+`Store::record_notion_document` persists DailyManifest, AgentOutput and Checkpoint
+records separately; identical records are idempotent, while changing the body
+under the same identity is an error. Its canonical format bound is the default
+DA05 record limit. Producers requiring new content must supply a new immutable ID.
+
+An interrupted create becomes `reconcile`. A known page is fetched directly;
+an unknown page is searched by deterministic title, with bounded pagination,
+then its destination, key and actual ordered body are verified. An empty search
+keeps the intent uncertain and schedules another read-only attempt. Duplicate
+markers, partial bodies or human edits become visible conflicts. The worker never
+recreates an uncertain page, resumes appending to a partial page, deletes remote
+content or overwrites a human edit. This is not an exactly-once delivery claim.
+Known no-effect failures use bounded create attempts and retry delay. Unsupported
+or missing prerequisites do not exhaust the create budget. Auth/rate errors and
+provider retry hints remain separate from ambiguous writes.
+
+`status` exposes `notion_publication` counts, oldest pending age, unbound count and
+remaining bootstrap namespaces. `doctor.notion` reports local prerequisites
+separately from local archive readiness; neither command contacts Notion.
+
+- `notion-list --limit 20` lists safe identities, state and errors, without bodies
+  or credentials. The maximum is 100 rows.
+- `notion-reconcile ID [--page-id UUID]` schedules read-only verification. A
+  supplied page is explicitly untrusted and cannot become the known page until
+  destination, deterministic key and complete body verification succeed.
+- `notion-retry ID` re-arms only a known no-effect failure. It cannot turn an
+  uncertain or previously completed write into permission to create again.
+
+Operator changes are audited locally. Global recovery hold takes precedence.
+Full backup retains queue, attempts, progress and verified receipts, but every
+unfinished intent becomes uncertain on restore: an older snapshot can predate a
+successful remote write. Git exports include semantic derived documents, not
+Notion operational receipts or credentials. Git-only restoration starts under
+hold and treats imported publication work as uncertain. After explicit release,
+only remote reconciliation can establish availability; regenerating metadata
+that differs from an older publication yields a conflict, never a blind recreate.
+Raw source evidence remains in canonical SQLite/CAS; Notion is a separate sink.
+
+Offline acceptance uses real SQLite transactions, public CLI `run`/`replay`, real
+signals, fake ntn child processes, backup and committed Git roundtrips. It covers
+missing prerequisites followed by automatic drain, disabled zero calls, target
+pins, accepted-response loss, empty search, cancellation/restart, partial writes,
+auth/rate failures, remote edits and operator-supplied wrong pages. These fixtures
+do not prove production Notion worker publication or deployed-runtime behavior;
+those require their own candidate-bound live receipt after dependency integration.

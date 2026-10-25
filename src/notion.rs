@@ -214,7 +214,18 @@ pub struct VerifiedPage {
     pub content_sha256: String,
     pub schema_version: u32,
     pub destination_key: String,
+    #[serde(default)]
+    pub block_ids: Vec<String>,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PublicationProgress {
+    pub page_id: String,
+    pub written_blocks: usize,
+    pub verified_blocks: usize,
+}
+pub type ProgressObserver<'a> =
+    dyn Fn(&PublicationProgress) -> Result<(), PublicationError> + Send + Sync + 'a;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManagedBlock {
@@ -482,14 +493,22 @@ impl Adapter {
         record: &Record,
         cancel: &CancellationToken,
     ) -> Result<VerifiedPage, PublicationError> {
+        self.create_observed(record, cancel, &|_| Ok(())).await
+    }
+    pub async fn create_observed(
+        &self,
+        record: &Record,
+        cancel: &CancellationToken,
+        observer: &ProgressObserver<'_>,
+    ) -> Result<VerifiedPage, PublicationError> {
         self.admit()?;
         #[cfg(feature = "ntn")]
         {
-            client::create(self, record, cancel).await
+            client::create(self, record, cancel, observer).await
         }
         #[cfg(not(feature = "ntn"))]
         {
-            let _ = (record, cancel, &self.work_root);
+            let _ = (record, cancel, observer, &self.work_root);
             Err(Failure::CompiledOut.into())
         }
     }
@@ -499,14 +518,32 @@ impl Adapter {
         record: &Record,
         cancel: &CancellationToken,
     ) -> Result<VerifiedPage, PublicationError> {
+        self.reconcile(Some(page_id), record, cancel, &|_| Ok(()))
+            .await?
+            .ok_or_else(|| Failure::InvalidOutput.into())
+    }
+    /// Read-only lookup/verification. An empty marker search NEVER authorizes creation.
+    pub async fn reconcile(
+        &self,
+        page_id: Option<&str>,
+        record: &Record,
+        cancel: &CancellationToken,
+        observer: &ProgressObserver<'_>,
+    ) -> Result<Option<VerifiedPage>, PublicationError> {
         self.admit()?;
         #[cfg(feature = "ntn")]
         {
-            client::verify(self, page_id, record, cancel).await
+            if let Some(page_id) = page_id {
+                client::verify(self, page_id, record, cancel, observer)
+                    .await
+                    .map(Some)
+            } else {
+                client::find(self, record, cancel, observer).await
+            }
         }
         #[cfg(not(feature = "ntn"))]
         {
-            let _ = (page_id, record, cancel);
+            let _ = (page_id, record, cancel, observer);
             Err(Failure::CompiledOut.into())
         }
     }

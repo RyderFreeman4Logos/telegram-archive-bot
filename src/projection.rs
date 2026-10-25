@@ -299,6 +299,26 @@ impl Store {
         for event in &events {
             let id = &event.entity;
             match event.kind.as_str() {
+                "notion_document" => {
+                    let encoded: String = tx.query_row(
+                        "SELECT record FROM notion_documents WHERE id=?1",
+                        [id],
+                        |r| r.get(0),
+                    )?;
+                    let record: crate::notion::Record = serde_json::from_str(&encoded)?;
+                    ensure!(
+                        record
+                            .plan(&crate::config::Notion::default())?
+                            .publication_key
+                            == *id,
+                        "Notion document identity mismatch"
+                    );
+                    insert_json(
+                        &mut files,
+                        format!("{PREFIX}/notion-documents/{id}.json"),
+                        &record,
+                    )?;
+                }
                 "activity_observation" => {
                     let manifest: String = tx.query_row(
                         "SELECT manifest FROM activity_observations WHERE id=?1",
