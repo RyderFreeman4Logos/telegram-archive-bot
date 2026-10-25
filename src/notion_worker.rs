@@ -91,7 +91,9 @@ pub(crate) async fn tick_with_http(
             return Ok(true);
         }
     };
-    store.notion_begin(&mut intent, &record, &config.notion)?;
+    if !store.notion_begin(&mut intent, &record, &config.notion)? {
+        return Ok(true);
+    }
     let adapter = Adapter::new(&config.notion, &store.root().join("work"));
     let progress = |progress: &crate::notion::PublicationProgress| {
         if intent.candidate_page_id.is_some() {

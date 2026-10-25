@@ -151,7 +151,7 @@ impl Store {
         intent: &mut Intent,
         record: &Record,
         config: &Notion,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let plan = record.plan(config)?;
         let encoded = serde_json::to_string(record)?;
         let mut conn = self.connection()?;
@@ -162,6 +162,27 @@ impl Store {
             })?,
             "Notion publication is held after recovery"
         );
+        let pinned: (Option<String>, Option<String>, Option<String>) = tx.query_row(
+            "SELECT record,publication_key,expected_digest FROM notion_queue WHERE id=?1 AND attempts=?2 AND state NOT IN ('complete','creating')",
+            params![intent.id,intent.attempts], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)),
+        )?;
+        let matches = match pinned {
+            (None, None, None) => true,
+            (Some(old_record), Some(key), Some(digest)) => {
+                old_record == encoded
+                    && key == plan.publication_key
+                    && digest == plan.canonical_digest
+            }
+            _ => false,
+        };
+        if !matches {
+            // Preserve the immutable historical pins. A representation upgrade
+            // requires an operator decision, not a repeated trigger error that
+            // prevents all later queue items from running.
+            tx.execute("UPDATE notion_queue SET state='conflict',error='publication_plan_changed' WHERE id=?1", [&intent.id])?;
+            tx.commit()?;
+            return Ok(false);
+        }
         let changed=tx.execute("UPDATE notion_queue SET record=?1,publication_key=?2,expected_digest=?3,state='creating',may_have_remote=1,attempts=attempts+1,create_attempts=create_attempts+?4,error=NULL WHERE id=?5 AND attempts=?6 AND state NOT IN ('complete','creating')",params![encoded,plan.publication_key,plan.canonical_digest,!intent.may_have_remote,intent.id,intent.attempts])?;
         ensure!(changed == 1, "Notion attempt ownership changed");
         intent.attempts += 1;
@@ -179,7 +200,7 @@ impl Store {
             ],
         )?;
         tx.commit()?;
-        Ok(())
+        Ok(true)
     }
 
     pub(crate) fn notion_invalid_record(&self, intent: &Intent) -> Result<()> {

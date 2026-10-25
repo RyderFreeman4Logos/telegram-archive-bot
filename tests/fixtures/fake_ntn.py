@@ -5,6 +5,7 @@ import os
 import stat
 import sys
 import time
+import unicodedata
 from pathlib import Path
 
 root = Path(__file__).parent
@@ -70,7 +71,7 @@ else:
     blocks = json.loads(json.dumps(state["blocks"]))
     if mode == "corrupt_body":
         # Keep the full metadata/digest markers; corrupt returned captured text only.
-        index = next(i for i, b in enumerate(blocks) if b[b["type"]]["rich_text"][0]["text"]["content"] == "Captured text (managed)") + 1
+        index = next(i for i, b in enumerate(blocks) if b["type"] == "heading_2" and b[b["type"]]["rich_text"][0]["text"]["content"].startswith("Captured text (managed")) + 1
         blocks[index]["paragraph"]["rich_text"][0]["text"]["content"] = "REMOTE EDIT"
     elif mode == "omit":
         blocks.pop(2)
@@ -82,6 +83,10 @@ else:
         block["id"] = f"10000000-0000-0000-0000-{i:012x}"
         block["has_children"] = False
         for item in block.get(block["type"], {}).get("rich_text", []):
+            if mode == "strip_controls":
+                # Actual S87 readback dropped U+000C. Exercise its whole Cc class,
+                # preserving ordinary line breaks/tabs rather than echoing input.
+                item["text"]["content"] = "".join(c for c in item["text"]["content"] if unicodedata.category(c) != "Cc" or c in "\n\t")
             item["plain_text"] = item["text"]["content"]
             item["annotations"] = {"bold": True}  # harmless Notion-only formatting
     start = int(next((x.split("==", 1)[1] for x in args if x.startswith("start_cursor==")), "0"))

@@ -119,6 +119,130 @@ fn worker_fixture() -> (
 
 #[cfg(feature = "ntn")]
 #[tokio::test]
+async fn s87_reopened_legacy_control_plan_never_changes_pins_or_dispatches() {
+    use telegram_archive_bot::notion::{ManagedBlock, Record};
+    let (root, store, config) = worker_fixture();
+    store.capture(&capture("100", "PDF text\n\n\u{c}")).unwrap();
+    drain_until(&store, &config, |m| m["states"]["complete"] == 2).await;
+    let db = rusqlite::Connection::open(config.state_dir.join("archive.sqlite")).unwrap();
+    let (id, encoded, key, page): (String, String, String, String) = db
+        .query_row(
+            "SELECT id,record,publication_key,page_id FROM notion_queue WHERE kind='revision'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    let record: Record = serde_json::from_str(&encoded).unwrap();
+    // Retain the exact v1 representation that a pre-S87 worker could have sent.
+    // The fixture is small enough for its single metadata/content paragraphs.
+    let mut metadata = serde_json::to_value(&record).unwrap();
+    metadata.as_object_mut().unwrap().remove("content");
+    metadata["content_utf8_sha256"] = json!(telegram_archive_bot::digest(&record.content));
+    metadata["canonical_version"] = json!("notion-ordered-text-v1");
+    let metadata = serde_json::to_string_pretty(&metadata).unwrap();
+    assert!(metadata.encode_utf16().count() < 2000);
+    let block = |kind: &str, text: String| ManagedBlock {
+        kind: kind.into(),
+        text,
+    };
+    let legacy = vec![
+        block("paragraph", format!("ARCHIVE_RECORD_V1 {key}")),
+        block("heading_2", "Record metadata (managed)".into()),
+        block("paragraph", metadata),
+        block("heading_2", "Captured text (managed)".into()),
+        block("paragraph", record.content.clone()),
+        block("paragraph", format!("END_ARCHIVE_RECORD_V1 {key}")),
+        block(
+            "heading_2",
+            "Human annotations and downstream analysis (unmanaged)".into(),
+        ),
+    ];
+    let old_digest = telegram_archive_bot::digest(serde_json::to_vec(&legacy).unwrap());
+    assert_ne!(
+        record.plan(&config.notion).unwrap().canonical_digest,
+        old_digest
+    );
+    let mut remote: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.path().join("remote.json")).unwrap()).unwrap();
+    remote["pages"][&page]["blocks"] = json!(legacy.iter().map(|b| {
+        json!({"object":"block", "type":b.kind, &b.kind:{"rich_text":[{"type":"text","text":{"content":b.text}}]}})
+    }).collect::<Vec<_>>());
+    let remote = serde_json::to_vec(&remote).unwrap();
+    std::fs::write(root.path().join("remote.json"), &remote).unwrap();
+    // Construct historical rows, keeping the production immutable-intent trigger
+    // installed. Updating a current pinned row would itself violate the fixture.
+    db.execute(
+        "CREATE TEMP TABLE legacy_intent AS SELECT * FROM notion_queue WHERE id=?1",
+        [&id],
+    )
+    .unwrap();
+    db.execute(
+        "CREATE TEMP TABLE legacy_attempts AS SELECT * FROM notion_attempts WHERE queue_id=?1",
+        [&id],
+    )
+    .unwrap();
+    db.execute(
+        "UPDATE legacy_intent SET expected_digest=?1,state='reconcile',receipt=NULL,available_at=0",
+        [&old_digest],
+    )
+    .unwrap();
+    db.execute("DELETE FROM notion_attempts WHERE queue_id=?1", [&id])
+        .unwrap();
+    db.execute("DELETE FROM notion_queue WHERE id=?1", [&id])
+        .unwrap();
+    db.execute("INSERT INTO notion_queue SELECT * FROM legacy_intent", [])
+        .unwrap();
+    db.execute(
+        "INSERT INTO notion_attempts SELECT * FROM legacy_attempts",
+        [],
+    )
+    .unwrap();
+    let pins = || {
+        db.query_row("SELECT json_array(record,publication_key,expected_digest,destination_key,page_id,attempts,create_attempts,progress) FROM notion_queue WHERE id=?1", [&id], |r|r.get::<_,String>(0)).unwrap()
+    };
+    let before = pins();
+    let calls = std::fs::read(root.path().join("calls")).unwrap();
+    drop(store);
+    let store = Store::open(&config.state_dir).unwrap();
+    drain_until(&store, &config, |m| m["states"]["conflict"] == 1).await;
+    assert_eq!(
+        pins(),
+        before,
+        "a new planner must not adopt a new body digest for an old intent"
+    );
+    assert_eq!(
+        std::fs::read(root.path().join("calls")).unwrap(),
+        calls,
+        "plan mismatch must not invoke ntn, including reads"
+    );
+    assert_eq!(
+        std::fs::read(root.path().join("remote.json")).unwrap(),
+        remote
+    );
+    assert_eq!(
+        db.query_row("SELECT error FROM notion_queue WHERE id=?1", [&id], |r| {
+            r.get::<_, String>(0)
+        })
+        .unwrap(),
+        "publication_plan_changed"
+    );
+    drop(store);
+    let store = Store::open(&config.state_dir).unwrap();
+    assert_eq!(store.notion_metrics().unwrap()["states"]["conflict"], 1);
+    assert_eq!(pins(), before);
+    store
+        .capture(&capture("200", "later ordinary source"))
+        .unwrap();
+    drain_until(&store, &config, |m| m["states"]["complete"] == 3).await;
+    assert_eq!(
+        pins(),
+        before,
+        "older conflicting intent cannot starve later work"
+    );
+}
+
+#[cfg(feature = "ntn")]
+#[tokio::test]
 async fn worker_publishes_actual_source_changes_and_verifies_receipts() {
     let (root, store, config) = worker_fixture();
     let mut captured = capture("100", "完整原文 🌍\n");
