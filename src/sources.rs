@@ -231,6 +231,14 @@ impl Store {
         tx: &Transaction<'_>,
         capture: &Capture,
     ) -> Result<Option<String>> {
+        self.capture_in_tx_verified(tx, capture, None)
+    }
+    pub(crate) fn capture_in_tx_verified(
+        &self,
+        tx: &Transaction<'_>,
+        capture: &Capture,
+        verified: Option<&crate::storage::VerifiedBlob>,
+    ) -> Result<Option<String>> {
         let has_content = matches!(capture.status, FetchStatus::Complete | FetchStatus::Partial);
         ensure!(
             has_content == capture.content.is_some(),
@@ -240,7 +248,14 @@ impl Store {
             ensure!(!content.body.trim().is_empty(), "empty capture body");
         }
         if let Some(raw) = &capture.raw_digest {
-            self.verify_blob(raw)?;
+            if let Some(verified) = verified {
+                ensure!(
+                    verified.covers(self, raw),
+                    "raw verification belongs to another store or blob"
+                );
+            } else {
+                self.verify_blob(raw)?;
+            }
         }
         let event_start: i64 = tx.query_row(
             "SELECT COALESCE(MAX(id),0) FROM projection_events",

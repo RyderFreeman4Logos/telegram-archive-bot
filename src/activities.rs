@@ -428,6 +428,13 @@ impl Store {
     /// One writer transaction makes source capture, aliases, activity evidence and
     /// its revision-pinned view converge across identical retries and workers.
     pub fn record_activity(&self, input: &ActivityCapture) -> Result<ActivityObservation> {
+        self.record_activity_verified(input, None)
+    }
+    pub(crate) fn record_activity_verified(
+        &self,
+        input: &ActivityCapture,
+        verified: Option<&crate::storage::VerifiedBlob>,
+    ) -> Result<ActivityObservation> {
         input.activity_time.validate()?;
         input.source_time.validate()?;
         let run_id = input.discovery.id()?;
@@ -472,7 +479,7 @@ impl Store {
             [],
             |r| r.get(0),
         )?;
-        self.capture_in_tx(&tx, &input.capture)?;
+        self.capture_in_tx_verified(&tx, &input.capture, verified)?;
         let source_observation_id = tx.query_row(
             "SELECT MAX(id) FROM observations WHERE source_id=?1",
             [activity.source.id()],

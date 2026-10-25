@@ -800,6 +800,21 @@ pub async fn serve(path: PathBuf, shutdown: CancellationToken) -> Result<()> {
             Ok::<_,anyhow::Error>(())
         });
     }
+    {
+        let store = store.clone();
+        let config = config.clone();
+        let cancel = shutdown.clone();
+        workers.spawn(async move {
+            while !cancel.is_cancelled() {
+                let snapshot=config.read().await.snapshot();
+                if crate::timeline::step(&store,&snapshot,&cancel).await.is_err() {
+                    crate::operator::log("daily_collection_error",None,json!({"reason":"inspect_daily_state"}));
+                }
+                tokio::select!{_=cancel.cancelled()=>break,_=tokio::time::sleep(Duration::from_secs(1))=>{}}
+            }
+            Ok::<_,anyhow::Error>(())
+        });
+    }
     let mut hup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
     let mut interval = tokio::time::interval(Duration::from_secs(60));
     loop {

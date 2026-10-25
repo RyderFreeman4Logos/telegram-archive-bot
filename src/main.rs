@@ -270,7 +270,7 @@ fn main() -> anyhow::Result<()> {
                     println!(
                         "{}",
                         serde_json::to_string_pretty(
-                            &serde_json::json!({"windows":windows,"external_effects_paused":store.recovery_paused()?,"timeline_provider":"not_installed"})
+                            &serde_json::json!({"windows":windows,"external_effects_paused":store.recovery_paused()?,"timeline_provider":telegram_archive_bot::timeline::readiness(&config)})
                         )?
                     );
                 }

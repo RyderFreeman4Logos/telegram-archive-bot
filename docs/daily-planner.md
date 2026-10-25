@@ -2,9 +2,8 @@
 
 The opt-in planner stores bounded account/day work in the existing SQLite
 archive. It does not create another source store. DA01 accounts and immutable
-source revisions remain authoritative. DA03 supplies timeline enumeration;
-this planner leaf has **no timeline transport**. A configured web session is
-not proof that collection is available. No paid X API is required to plan.
+source revisions remain authoritative. DA03 supplies [anonymous timeline enumeration](daily-timeline.md) through FxTwitter v2.
+No X account, cookie, or paid API is required. Collection stays opt-in.
 
 ## Configuration and identity
 
@@ -44,8 +43,9 @@ label = "Example"
 enabled = true
 
 [daily.provider]
-kind = "disabled"
-max_pages = 20
+kind = "fx_twitter"
+max_pages = 5
+max_scan_pages = 20
 page_size = 40
 ```
 
@@ -148,10 +148,10 @@ the planner never guesses an offset or changes process-global `TZ`.
 | `complete` | Adapter asserted actual closed-window coverage with no continuation |
 | `open_current_day` | The day is still open; it cannot be final coverage |
 
-In this leaf the automatic loop reports `timeline_provider_not_installed` as `blocked`
-or `open_current_day`, with **zero collection attempts**. It never interprets
-provider absence as an empty timeline or completed coverage. Synthetic lifecycle
-tests exercise the adapter API; they are not live collection evidence.
+With the provider disabled, the automatic loop reports `timeline_provider_not_installed`
+with zero collection attempts. The anonymous provider records raw response hashes,
+continuation and uncertainty; provider absence is never an empty timeline or
+completed coverage. See the transport document for actual live evidence and limits.
 
 Claims pin configuration, watch, attempt and generation. Checkpoints atomically
 persist the cursor and an immutable per-page evidence receipt, bounded by
