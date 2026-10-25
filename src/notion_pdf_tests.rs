@@ -112,7 +112,7 @@ impl Fixture {
             retain: std::sync::atomic::AtomicBool::new(false),
         })
     }
-    async fn tick(&self) -> Result<()> {
+    async fn tick(&self) -> Result<bool> {
         use std::io::Write;
         let before = self.store.notion_list(100)?;
         let result = crate::notion_worker::tick_with_http(
@@ -130,8 +130,7 @@ impl Fixture {
                 .open(self.root.path().join("dispatches.jsonl"))?,
             "{trace}"
         )?;
-        result?;
-        Ok(())
+        result
     }
     async fn drain(&self, count: usize) -> Result<()> {
         let attempts = |rows: Vec<Value>| {
@@ -141,8 +140,17 @@ impl Fixture {
                 .unwrap_or(0)
         };
         let before = attempts(self.store.notion_list(100)?);
-        for _ in 0..count {
-            self.tick().await?;
+        let mut remaining = count;
+        let mut idle = std::time::Duration::ZERO;
+        while remaining > 0 && idle < std::time::Duration::from_secs(2) {
+            let started = std::time::Instant::now();
+            if self.tick().await? {
+                remaining -= 1;
+            } else {
+                // A contended worker lock is no work; yield as the real service does.
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                idle += started.elapsed();
+            }
             if attempts(self.store.notion_list(100)?) > before {
                 return Ok(());
             }
@@ -491,5 +499,22 @@ async fn auth_gap_can_resume_explicitly_but_unknown_append_cannot_be_retried() -
             .is_err()
     );
     assert_eq!(f.remote()["pdf_appends"], 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn fixture_work_budget_waits_for_contended_worker_lock() -> Result<()> {
+    let fixture = Fixture::new("normal").await?;
+    let guard = fixture.store.notion_lock()?.expect("uncontended control");
+    assert!(!fixture.tick().await?, "busy worker must not dispatch");
+    let release = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        drop(guard);
+    });
+    let result = fixture.drain(8).await;
+    release.await?;
+    result?;
+    assert_eq!(fixture.status()["attachment"], "verified");
+    assert_eq!(fixture.remote()["pdf_appends"], 1);
     Ok(())
 }
