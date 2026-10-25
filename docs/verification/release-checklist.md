@@ -1,21 +1,24 @@
 # Release candidate verification
 
-Current target: **0.1.0-rc.3**. At this pre-publication source snapshot, final
-RC3 installation/runtime attestation, the full main-corpus Git export/restore,
-asset publication and download verification remain pending. Required release
-verification assets must bind the final source commit/tree, eight-command gate,
-independent review, Cargo-installed executables and runtime activation. A
-post-publication receipt must verify the downloaded assets. The release archive
-must record frozen private-corpus counts, corrections, integrity/reuse checks,
-Git export/restore and storage measurements without publishing private inputs.
-RC2 installation and runtime were separately attested; those receipts retain
-their original source identity. RC3 adds bounded Git index writes with a
-real-Git regression and six public CLI large-index controls. The performance
-leaf's exact-source gate passed with 178 tests passed and two ignored; the
-versioned RC3 source requires its own final gate and review.
-See [RC3 notes](../release-notes-0.1.0-rc.3.md) and
-[legacy parity](../legacy-parity.md). Prior provider receipts retain their source
-identities; client/credential limits are not converted into passing checks.
+Current target: **0.1.0-rc.4**. This source snapshot adds the daily anonymous X,
+Notion/PDF, failure-reporting and external-reader workflow. Its final versioned
+canonical gate, hosted CI, Cargo installation, schema-19 activation and published
+asset verification remain pending at source preparation. The release verification
+assets must bind their actual source commit/tree and executable hashes.
+
+Independent leaf gates and real anonymous timeline/content, Notion text/PDF and
+synthetic GitHub reporting checks passed with separate source-bound receipts.
+The PDF text-normalization failure and interrupted reconciliation attempt remain
+recorded alongside successful recovery. External reading must verify full retained
+bodies and preserve collection/context gaps; it cannot infer complete analysis
+from a title, file, publication status or available fragment.
+
+RC3 was published and deployed, and its main-corpus integrity, Git export and
+Git-only restore receipts are historical evidence, not fresh RC4 corpus reruns.
+Private watchlists, credentials, content and draft Git history are excluded from
+public assets. See [RC4 notes](../release-notes-0.1.0-rc.4.md),
+[reader handoffs](../reader-handoffs.md) and [legacy parity](../legacy-parity.md).
+Client-access limits in #41 and optional F21/F22 remain explicitly unverified.
 
 Project-Spec: `rust-telegram-archive-bot-v1`. Target: `0.1.0-rc.1`.
 The checklist below is the historical RC1 source ledger. RC1 publication is

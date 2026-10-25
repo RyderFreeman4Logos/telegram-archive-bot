@@ -138,3 +138,16 @@ offline; its Notion readiness is separate from local archive readiness. See
 [notion.md](notion.md) for queue states, bounded bootstrap, uncertain-write
 reconciliation, operator controls and recovery. Live publication of this worker
 requires a separate candidate-bound acceptance receipt.
+
+## Reader corpus and authoritative SOP (DA09 / #76)
+
+`reader.enabled` defaults true and derives local daily manifests independently of
+Notion transport. Configure `[reader.sop]` `id`, `version`, optional `page_id` and
+`page_url` with the deployment's authoritative reading policy. Either a valid ID
+or URL configures the handoff; neither present is explicit pending configuration and prevents completed external-reader layers,
+without blocking collection. The SOP never supplies a publication destination.
+Bounds are `max_activities = 10000`, `max_windows = 1000` and
+`export_bytes = 100000000`; excess work stays visibly pending with a build error.
+Use `reader-status`, `reader-list`, `reader-export`, `reader-checkpoint` and
+`reader-checkpoints`. SIGHUP atomically applies valid settings to new bounded
+worker turns. See the [full five-layer contract](reader-handoffs.md).

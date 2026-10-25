@@ -69,6 +69,38 @@ enum Command {
     },
     /// Re-arm a known no-effect failure; uncertain remote writes cannot be recreated.
     NotionRetry { id: String },
+    /// Build bounded immutable local reader manifests; no provider/Notion requests.
+    ReaderBuild {
+        #[arg(long, default_value_t = 1)]
+        limit: usize,
+    },
+    /// List day/account manifest heads; continuation is the last scope key.
+    ReaderList {
+        #[arg(long)]
+        date: String,
+        #[arg(long, default_value = "America/Los_Angeles")]
+        timezone: String,
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+        #[arg(long)]
+        after: Option<String>,
+    },
+    /// Export one pinned manifest closure without runtime secrets or unrelated records.
+    ReaderExport {
+        manifest_id: String,
+        #[arg(long, default_value = "json")]
+        format: String,
+    },
+    /// Inspect local manifest backlog and stale checkpoints; no remote calls.
+    ReaderStatus,
+    /// Save an external L1-L5 reader checkpoint against one exact absolute-day snapshot.
+    ReaderCheckpoint {
+        input: std::path::PathBuf,
+        #[arg(long)]
+        allow_stale: bool,
+    },
+    /// Inspect L1-L5 completion, read coverage and input drift separately.
+    ReaderCheckpoints { manifest_id: String },
     /// Compute persisted updates without polling or sending; enabled providers may run.
     Replay { updates: std::path::PathBuf },
     /// Summarize read-only local files; with no paths, read paths from stdin.
@@ -327,6 +359,65 @@ fn main() -> anyhow::Result<()> {
                 Command::FailureReportStatus { limit } => println!(
                     "{}",
                     serde_json::to_string_pretty(&store.failure_report_status(limit)?)?
+                ),
+                Command::ReaderBuild { limit } => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&store.reader_tick(&config, limit)?)?
+                ),
+                Command::ReaderList {
+                    date,
+                    timezone,
+                    limit,
+                    after,
+                } => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&store.reader_heads(
+                        &date,
+                        &timezone,
+                        limit,
+                        after.as_deref()
+                    )?)?
+                ),
+                Command::ReaderExport {
+                    manifest_id,
+                    format,
+                } => {
+                    let export = store.reader_export(&config, &manifest_id)?;
+                    let rendered = match format.as_str() {
+                        "json" => export.render_json(config.reader.export_bytes)?,
+                        "markdown" => export.markdown(config.reader.export_bytes)?,
+                        _ => anyhow::bail!("reader format must be json or markdown"),
+                    };
+                    print!("{rendered}");
+                }
+                Command::ReaderStatus => {
+                    println!("{}", serde_json::to_string_pretty(&store.reader_status()?)?)
+                }
+                Command::ReaderCheckpoint { input, allow_stale } => {
+                    use std::io::Read;
+                    let mut bytes = vec![];
+                    std::fs::File::open(input)?
+                        .take(config.notion.record_bytes as u64 + 1)
+                        .read_to_end(&mut bytes)?;
+                    anyhow::ensure!(
+                        bytes.len() <= config.notion.record_bytes,
+                        "reader checkpoint input exceeds bound"
+                    );
+                    let checkpoint = serde_json::from_slice(&bytes)?;
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&store.record_reader_checkpoint(
+                            &config,
+                            &checkpoint,
+                            allow_stale
+                        )?)?
+                    );
+                }
+                Command::ReaderCheckpoints { manifest_id } => println!(
+                    "{}",
+                    serde_json::to_string_pretty(
+                        &store.reader_checkpoints(&config, &manifest_id)?
+                    )?
                 ),
                 Command::NotionReconcile { id, page_id } => {
                     store.reconcile_notion(&id, page_id.as_deref())?;

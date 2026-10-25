@@ -61,6 +61,140 @@ fn calls(root: &Path) -> Vec<Vec<String>> {
         .collect()
 }
 
+// S87 / #87: Notion can remove controls while accepting a successful write.
+#[cfg(feature = "ntn")]
+#[tokio::test]
+async fn s87_controls_survive_real_adapter_readback_as_reversible_json() {
+    let (root, config) = fixture("strip_controls");
+    let mut record = record();
+    let controls: String = (0u8..=0x9f)
+        .map(char::from)
+        .filter(|c| c.is_control())
+        .collect();
+    record.content =
+        format!("原文 🌍 e\u{301} literal \\\\u000c \\\"\n{controls}\n\u{c}").repeat(40);
+    record.title.push('\u{85}'); // metadata is also a returned JSON document
+    let original = record.clone();
+    let verified = Adapter::new(&config, root.path())
+        .create(&record, &CancellationToken::new())
+        .await
+        .expect("control-containing canonical text must survive Notion's lossy text boundary");
+    assert_eq!(record, original);
+    assert_eq!(
+        verified.content_sha256,
+        telegram_archive_bot::digest(&record.content)
+    );
+    let remote: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.path().join("state.json")).unwrap()).unwrap();
+    let blocks = remote["blocks"].as_array().unwrap();
+    let texts: Vec<&str> = blocks
+        .iter()
+        .map(|b| {
+            b[b["type"].as_str().unwrap()]["rich_text"][0]["text"]["content"]
+                .as_str()
+                .unwrap()
+        })
+        .collect();
+    assert!(
+        texts
+            .iter()
+            .all(|s| !s.chars().any(|c| c.is_control() && c != '\n' && c != '\t'))
+    );
+    let start = texts
+        .iter()
+        .position(|s| *s == "Captured text (managed; JSON string encoding)")
+        .unwrap();
+    let metadata: serde_json::Value = serde_json::from_str(&texts[2..start].concat()).unwrap();
+    assert_eq!(metadata["content_encoding"], "json-string-v1");
+    assert_eq!(metadata["canonical_version"], "notion-ordered-text-json-v2");
+    assert_eq!(metadata["title"], record.title);
+    let encoded = texts[start + 1..texts.len() - 2].concat();
+    // Independent reader reconstructs the original UTF-8, not an echoed digest.
+    let decoded: String = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(decoded, record.content);
+    assert_eq!(
+        telegram_archive_bot::digest(&decoded),
+        verified.content_sha256
+    );
+    assert!(texts.iter().all(|s| s.encode_utf16().count() <= 2000));
+    assert_eq!(
+        calls(root.path())
+            .iter()
+            .filter(|args| args.iter().any(|a| a == "POST"))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn s87_control_encoding_expansion_is_bounded_before_dispatch() {
+    let mut record = record();
+    record.content = "\u{85}".repeat(2000);
+    let config = Notion {
+        record_bytes: serde_json::to_vec(&record).unwrap().len() + 100,
+        ..Notion::default()
+    };
+    assert_eq!(record.plan(&config).unwrap_err().state, Failure::Limit);
+    #[cfg(feature = "ntn")]
+    {
+        let (root, mut ready) = fixture("strip_controls");
+        ready.record_bytes = config.record_bytes;
+        assert_eq!(
+            Adapter::new(&ready, root.path())
+                .create(&record, &CancellationToken::new())
+                .await
+                .unwrap_err()
+                .state,
+            Failure::Limit
+        );
+        assert!(calls(root.path()).is_empty());
+    }
+}
+
+#[test]
+fn s87_ordinary_text_keeps_exact_v1_blocks_and_digest() {
+    use telegram_archive_bot::notion::ManagedBlock;
+    let mut record = record();
+    record.content = "原文 🌍 e\u{301}\t\n\n literal \\\\u000c".into();
+    let plan = record.plan(&Notion::default()).unwrap();
+    let mut metadata = serde_json::to_value(&record).unwrap();
+    metadata.as_object_mut().unwrap().remove("content");
+    metadata["content_utf8_sha256"] =
+        serde_json::json!(telegram_archive_bot::digest(&record.content));
+    metadata["canonical_version"] = serde_json::json!("notion-ordered-text-v1");
+    let block = |kind: &str, text: String| ManagedBlock {
+        kind: kind.into(),
+        text,
+    };
+    let expected = vec![
+        block(
+            "paragraph",
+            format!("ARCHIVE_RECORD_V1 {}", plan.publication_key),
+        ),
+        block("heading_2", "Record metadata (managed)".into()),
+        block(
+            "paragraph",
+            serde_json::to_string_pretty(&metadata).unwrap(),
+        ),
+        block("heading_2", "Captured text (managed)".into()),
+        block("paragraph", record.content.clone()),
+        block(
+            "paragraph",
+            format!("END_ARCHIVE_RECORD_V1 {}", plan.publication_key),
+        ),
+        block(
+            "heading_2",
+            "Human annotations and downstream analysis (unmanaged)".into(),
+        ),
+    ];
+    assert_eq!(plan.canonical_version, "notion-ordered-text-v1");
+    assert_eq!(plan.managed_blocks, expected);
+    assert_eq!(
+        plan.canonical_digest,
+        telegram_archive_bot::digest(serde_json::to_vec(&expected).unwrap())
+    );
+}
+
 #[cfg(feature = "ntn")]
 #[tokio::test]
 async fn publishes_all_unicode_then_verifies_returned_blocks() {
@@ -486,15 +620,18 @@ fn schema_chunks_and_immutable_keys_preserve_every_character() {
     let start = plan
         .managed_blocks
         .iter()
-        .position(|b| b.text == "Captured text (managed)")
+        .position(|b| b.text == "Captured text (managed; JSON string encoding)")
         .unwrap()
         + 1;
     let end = plan.managed_blocks.len() - 2;
     assert_eq!(
-        plan.managed_blocks[start..end]
-            .iter()
-            .map(|b| b.text.as_str())
-            .collect::<String>(),
+        serde_json::from_str::<String>(
+            &plan.managed_blocks[start..end]
+                .iter()
+                .map(|b| b.text.as_str())
+                .collect::<String>()
+        )
+        .unwrap(),
         record.content
     );
     assert!(

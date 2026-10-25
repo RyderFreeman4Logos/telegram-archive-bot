@@ -13,6 +13,9 @@ pub const SCHEMA_VERSION: u32 = 1;
 pub const NTN_VERSION: &str = "ntn 0.22.10";
 pub const API_VERSION: &str = "2026-03-11";
 pub const CANONICAL_VERSION: &str = "notion-ordered-text-v1";
+pub const JSON_CANONICAL_VERSION: &str = "notion-ordered-text-json-v2";
+const TEXT_HEADING: &str = "Captured text (managed)";
+const JSON_TEXT_HEADING: &str = "Captured text (managed; JSON string encoding)";
 
 #[cfg(feature = "ntn")]
 #[path = "notion_client.rs"]
@@ -294,15 +297,45 @@ impl Record {
                 .map_err(|_| Failure::InvalidPayload)?,
         );
         let content_sha256 = crate::digest(&self.content);
+        // S87: Notion accepted a PDF's text but removed its U+000C on readback.
+        // Keep ordinary v1 plans byte-identical. Encode the rare lossy Cc case
+        // reversibly, including DEL/C1 that serde_json leaves as literal text.
+        let json_content = self.content.chars().any(unsafe_control)
+            || std::str::from_utf8(&serialized)
+                .map_err(|_| Failure::InvalidPayload)?
+                .chars()
+                .any(unsafe_control);
+        let canonical_version = if json_content {
+            JSON_CANONICAL_VERSION
+        } else {
+            CANONICAL_VERSION
+        };
+        let encoded_content = if json_content {
+            Some(escape_json_controls(
+                serde_json::to_string(&self.content).map_err(|_| Failure::InvalidPayload)?,
+                config.record_bytes,
+            )?)
+        } else {
+            None
+        };
         let mut metadata = serde_json::to_value(self).map_err(|_| Failure::InvalidPayload)?;
         metadata
             .as_object_mut()
             .ok_or(Failure::InvalidPayload)?
             .remove("content");
         metadata["content_utf8_sha256"] = json!(content_sha256);
-        metadata["canonical_version"] = json!(CANONICAL_VERSION);
+        metadata["canonical_version"] = json!(canonical_version);
+        if json_content {
+            metadata["content_encoding"] = json!("json-string-v1");
+        }
         let metadata =
             serde_json::to_string_pretty(&metadata).map_err(|_| Failure::InvalidPayload)?;
+        let metadata = if let Some(content) = &encoded_content {
+            // Bound the entire expanded representation before request construction.
+            escape_json_controls(metadata, config.record_bytes - content.len())?
+        } else {
+            metadata
+        };
         let mut blocks = vec![
             block("paragraph", format!("ARCHIVE_RECORD_V1 {publication_key}")),
             block("heading_2", "Record metadata (managed)"),
@@ -312,9 +345,16 @@ impl Record {
                 .into_iter()
                 .map(|text| block("paragraph", text)),
         );
-        blocks.push(block("heading_2", "Captured text (managed)"));
+        blocks.push(block(
+            "heading_2",
+            if json_content {
+                JSON_TEXT_HEADING
+            } else {
+                TEXT_HEADING
+            },
+        ));
         blocks.extend(
-            chunks(&self.content)
+            chunks(encoded_content.as_deref().unwrap_or(&self.content))
                 .into_iter()
                 .map(|text| block("paragraph", text)),
         );
@@ -334,12 +374,77 @@ impl Record {
         Ok(PublicationPlan {
             page_title: format!("archive-v1/{}/{publication_key}", self.data.kind()),
             publication_key,
-            canonical_version: CANONICAL_VERSION.into(),
+            canonical_version: canonical_version.into(),
             canonical_digest,
             content_sha256,
             managed_blocks: blocks,
         })
     }
+}
+
+impl PublicationPlan {
+    /// Decode the actual returned body after its ordered blocks were checked.
+    /// An unchanged hash printed in metadata is never content verification.
+    #[cfg(feature = "ntn")]
+    fn verify_returned_content(&self, blocks: &[ManagedBlock]) -> Result<(), PublicationError> {
+        let heading = match self.canonical_version.as_str() {
+            CANONICAL_VERSION => TEXT_HEADING,
+            JSON_CANONICAL_VERSION => JSON_TEXT_HEADING,
+            _ => return Err(Failure::Conflict.into()),
+        };
+        let start = blocks
+            .iter()
+            .position(|b| b.kind == "heading_2" && b.text == heading)
+            .ok_or(Failure::Conflict)?
+            + 1;
+        let end = blocks.len().checked_sub(2).ok_or(Failure::Conflict)?;
+        let body = blocks.get(start..end).ok_or(Failure::Conflict)?;
+        if body.iter().any(|b| b.kind != "paragraph") {
+            return Err(Failure::Conflict.into());
+        }
+        let text: String = body.iter().map(|b| b.text.as_str()).collect();
+        let decoded = if self.canonical_version == JSON_CANONICAL_VERSION {
+            serde_json::from_str::<String>(&text).map_err(|_| Failure::Conflict)?
+        } else {
+            text
+        };
+        if crate::digest(decoded) != self.content_sha256 {
+            return Err(Failure::Conflict.into());
+        }
+        Ok(())
+    }
+}
+
+fn unsafe_control(ch: char) -> bool {
+    ch.is_control() && ch != '\n' && ch != '\t'
+}
+
+// Input is serialized JSON; escaping its remaining literal Cc characters keeps
+// decoded strings identical. Pretty-print whitespace (LF/tab) remains readable.
+fn escape_json_controls(value: String, limit: usize) -> Result<String, PublicationError> {
+    let bytes = value
+        .chars()
+        .try_fold(0usize, |bytes, ch| {
+            bytes.checked_add(if unsafe_control(ch) { 6 } else { ch.len_utf8() })
+        })
+        .ok_or(Failure::Limit)?;
+    if bytes > limit {
+        return Err(Failure::Limit.into());
+    }
+    if bytes == value.len() {
+        return Ok(value);
+    }
+    use std::fmt::Write;
+    let mut escaped = String::with_capacity(bytes);
+    for ch in value.chars() {
+        if unsafe_control(ch) {
+            write!(&mut escaped, "\\u{:04x}", u32::from(ch))
+                .map_err(|_| Failure::InvalidPayload)?;
+        } else {
+            escaped.push(ch);
+        }
+    }
+    Ok(escaped)
 }
 
 fn block(kind: &str, text: impl Into<String>) -> ManagedBlock {

@@ -413,6 +413,8 @@ impl<'a> Operation<'a> {
         if digest != plan.canonical_digest {
             return Err(self.error(Failure::Conflict));
         }
+        plan.verify_returned_content(&returned)
+            .map_err(|_| self.error(Failure::Conflict))?;
         Ok(VerifiedPage {
             page_id: page_id.into(),
             publication_key: plan.publication_key.clone(),

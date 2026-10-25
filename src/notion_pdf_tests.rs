@@ -608,3 +608,155 @@ async fn failure_reporting_producer_pdf_requires_actual_verified_recovery() -> R
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn reader_observes_actual_pdf_recovery_with_exact_observation_pin() -> Result<()> {
+    use crate::activities::*;
+    let f = Fixture::new("append_lost").await?;
+    f.drain(8).await?;
+    let mut config = f.config.clone();
+    config.daily.enabled = true;
+    config.daily.accounts = vec![crate::config::WatchAccount {
+        key: "reader-fixture".into(),
+        user_id: Some("1".into()),
+        ..Default::default()
+    }];
+    let day = f
+        .store
+        .backfill_daily(
+            &config,
+            "2026-03-08".parse()?,
+            "2026-03-08".parse()?,
+            1_790_000_000,
+        )?
+        .windows
+        .remove(0);
+    let identity = Identity::from_url("https://example.org/paper.pdf")?;
+    let observation: i64 = f.store.connection()?.query_row(
+        "SELECT max(id) FROM observations WHERE source_id=?1",
+        [identity.id()],
+        |r| r.get(0),
+    )?;
+    let view = f.store.create_view(
+        &identity,
+        ViewPolicy {
+            max_nodes: 10,
+            max_depth: 3,
+        },
+    )?;
+    f.store.record_activity_with_view(
+        &ActivityCapture {
+            actor: day.account,
+            handle: None,
+            display_name: None,
+            provider_event_id: Some("8".into()),
+            kind: ActivityKind::Original,
+            discovery: DiscoveryRun {
+                provider: "x".into(),
+                key: day.id.clone(),
+                provenance: json!({"window_id":day.id}),
+            },
+            occurrence_key: "pdf".into(),
+            observation_key: "pdf".into(),
+            activity_time: TimeEvidence::Unknown {
+                provenance: json!({}),
+            },
+            source_time: TimeEvidence::Unknown {
+                provenance: json!({}),
+            },
+            retrieved_at: day.utc_end,
+            provenance: json!({}),
+            capture: Capture {
+                identity: identity.clone(),
+                submitted_url: None,
+                content: None,
+                status: FetchStatus::Complete,
+                extractor: "fixture".into(),
+                evidence: json!({}),
+                raw_digest: None,
+                relations: vec![],
+            },
+            view_policy: view.policy.clone(),
+        },
+        &view,
+        observation,
+    )?;
+    let settle = || -> Result<crate::reader::PortableExport> {
+        for _ in 0..12 {
+            assert_eq!(f.store.reader_tick(&config, 1)?.errors, 0);
+        }
+        let head = f
+            .store
+            .reader_heads("2026-03-08", "America/Los_Angeles", 100, None)?
+            .into_iter()
+            .find(|h| h.window_id.is_none())
+            .unwrap();
+        f.store.reader_export(&config, &head.manifest_id)
+    };
+    let before = settle()?;
+    let source = &before.activities[0].sources[0];
+    let attachment = source
+        .enrichment
+        .as_ref()
+        .and_then(|e| e.attachments.first())
+        .expect("actual PDF job must be visible without reader_note_source");
+    assert_ne!(attachment.attachment_state, "verified");
+    assert!(attachment.gap.is_some());
+    assert!(!before.manifest.body_complete);
+    f.mode("normal");
+    f.retry().await?;
+    let after = settle()?;
+    assert_ne!(
+        after.manifest_id, before.manifest_id,
+        "actual attachment readback must invalidate its exact pinned source dependency"
+    );
+    let attachment = &after.activities[0].sources[0]
+        .enrichment
+        .as_ref()
+        .unwrap()
+        .attachments[0];
+    assert_eq!(attachment.attachment_state, "verified");
+    assert_eq!(
+        attachment.verified_sha256.as_deref(),
+        f.status()["verified_sha256"].as_str()
+    );
+    assert!(attachment.page_id.is_some() && attachment.block_id.is_some());
+    assert_eq!(
+        after.activities[0].sources[0].revision_id,
+        source.revision_id
+    );
+    assert_eq!(
+        f.remote()["pdf_appends"],
+        1,
+        "reader synchronization never redispatches unknown remote append"
+    );
+    assert_ne!(
+        f.store
+            .reader_export(&config, &before.manifest_id)?
+            .activities[0]
+            .sources[0]
+            .enrichment
+            .as_ref()
+            .unwrap()
+            .attachments[0]
+            .attachment_state,
+        "verified"
+    );
+    f.mode("missing_attachment");
+    f.store
+        .reconcile_notion(f.status()["queue_id"].as_str().unwrap(), None)?;
+    f.drain(2).await?;
+    let revoked = settle()?;
+    let revoked = &revoked.activities[0].sources[0]
+        .enrichment
+        .as_ref()
+        .unwrap()
+        .attachments[0];
+    assert_ne!(revoked.attachment_state, "verified");
+    assert!(
+        revoked.verified_sha256.is_none() && revoked.gap.is_some(),
+        "actual read-only reconciliation must revoke the reader byte proof"
+    );
+    assert_eq!(f.remote()["pdf_appends"], 1);
+    Ok(())
+}

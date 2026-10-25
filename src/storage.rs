@@ -11,7 +11,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-pub const SCHEMA_VERSION: u32 = 18;
+pub const SCHEMA_VERSION: u32 = 19;
 
 #[derive(Clone, Debug)]
 pub struct Store {
@@ -189,6 +189,9 @@ impl Store {
         }
         if version < 18 {
             tx.execute_batch(include_str!("../migrations/018_failure_reporting.sql"))?;
+        }
+        if version < 19 {
+            tx.execute_batch(include_str!("../migrations/019_reader_handoffs.sql"))?;
         }
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         tx.commit()?;
