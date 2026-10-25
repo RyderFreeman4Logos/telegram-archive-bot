@@ -333,6 +333,7 @@ async fn product_web_text_attachment_and_empty_text_pdf_keep_usable_originals() 
     let extraction = docs
         .response(
             crate::network::Response {
+                retry_after_seconds: None,
                 submitted: "https://example.org/article?id=1".parse()?,
                 resolved: "https://example.org/article?id=1".parse()?,
                 redirects: vec![],

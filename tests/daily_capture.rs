@@ -146,7 +146,7 @@ impl telegram_archive_bot::daily_capture::Collector for FixtureCollector {
    *self.calls.lock().unwrap().entry(source.external_id.clone()).or_default()+=1;
    if source.provider=="web" {
     let (mime,bytes)=if source.external_id.ends_with(".pdf") {("application/pdf",fixture_pdf("Retained PDF source text"))}else{("text/html",format!("<html><body><article><h1>External source</h1><p>{}</p></article></body></html>","Useful original external article text. ".repeat(70)).into_bytes())};
-    let extracted=telegram_archive_bot::documents::Documents{store:store.clone(),config:config.clone(),http:Default::default()}.response(telegram_archive_bot::network::Response{submitted:source.url().parse()?,resolved:source.url().parse()?,redirects:vec![],status:200,content_type:mime.into(),charset:None,bytes},cancel).await?;
+    let extracted=telegram_archive_bot::documents::Documents{store:store.clone(),config:config.clone(),http:Default::default()}.response(telegram_archive_bot::network::Response{retry_after_seconds:None,submitted:source.url().parse()?,resolved:source.url().parse()?,redirects:vec![],status:200,content_type:mime.into(),charset:None,bytes},cancel).await?;
     return Ok(vec![extracted.capture]);
    }
    let payload=match source.external_id.as_str(){

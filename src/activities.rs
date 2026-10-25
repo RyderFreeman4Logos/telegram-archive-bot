@@ -428,7 +428,7 @@ impl Store {
     /// One writer transaction makes source capture, aliases, activity evidence and
     /// its revision-pinned view converge across identical retries and workers.
     pub fn record_activity(&self, input: &ActivityCapture) -> Result<ActivityObservation> {
-        self.record_activity_impl(input, None)
+        self.record_activity_impl(input, None, None)
     }
     pub(crate) fn record_activity_with_view(
         &self,
@@ -436,12 +436,20 @@ impl Store {
         view: &crate::sources::View,
         source_observation_id: i64,
     ) -> Result<ActivityObservation> {
-        self.record_activity_impl(input, Some((view, source_observation_id)))
+        self.record_activity_impl(input, Some((view, source_observation_id)), None)
+    }
+    pub(crate) fn record_activity_verified(
+        &self,
+        input: &ActivityCapture,
+        verified: Option<&crate::storage::VerifiedBlob>,
+    ) -> Result<ActivityObservation> {
+        self.record_activity_impl(input, None, verified)
     }
     fn record_activity_impl(
         &self,
         input: &ActivityCapture,
         supplied_view: Option<(&crate::sources::View, i64)>,
+        verified: Option<&crate::storage::VerifiedBlob>,
     ) -> Result<ActivityObservation> {
         input.activity_time.validate()?;
         input.source_time.validate()?;
@@ -493,7 +501,7 @@ impl Store {
         let source_observation_id = if let Some((_, observation)) = supplied_view {
             observation
         } else {
-            self.capture_in_tx(&tx, &input.capture)?;
+            self.capture_in_tx_verified(&tx, &input.capture, verified)?;
             tx.query_row(
                 "SELECT MAX(id) FROM observations WHERE source_id=?1",
                 [activity.source.id()],

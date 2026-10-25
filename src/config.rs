@@ -686,6 +686,7 @@ impl Daily {
         );
         ensure!(
             (1..=1000).contains(&self.provider.max_pages)
+                && (1..=512).contains(&self.provider.max_scan_pages)
                 && (1..=100).contains(&self.provider.page_size),
             "invalid daily provider page limits"
         );
@@ -798,6 +799,7 @@ pub enum DailyProviderKind {
     #[default]
     Disabled,
     XWebSession,
+    FxTwitter,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -807,6 +809,7 @@ pub struct DailyProvider {
     pub cookie: Option<SecretRef>,
     pub bearer: Option<SecretRef>,
     pub max_pages: usize,
+    pub max_scan_pages: usize,
     pub page_size: usize,
 }
 impl Default for DailyProvider {
@@ -816,6 +819,7 @@ impl Default for DailyProvider {
             cookie: None,
             bearer: None,
             max_pages: 20,
+            max_scan_pages: 20,
             page_size: 40,
         }
     }

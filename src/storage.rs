@@ -17,6 +17,20 @@ pub const SCHEMA_VERSION: u32 = 16;
 pub struct Store {
     root: PathBuf,
     idle: Arc<Mutex<Vec<Connection>>>,
+    #[cfg(test)]
+    verification_bytes: Arc<std::sync::atomic::AtomicU64>,
+}
+
+// Private fields bind the completed verification to its store and held CAS fence.
+pub(crate) struct VerifiedBlob {
+    root: PathBuf,
+    digest: String,
+    _guard: File,
+}
+impl VerifiedBlob {
+    pub(crate) fn covers(&self, store: &Store, digest: &str) -> bool {
+        self.root == store.root && self.digest == digest
+    }
 }
 
 pub(crate) struct StoreConnection {
@@ -108,6 +122,8 @@ impl Store {
         let store = Self {
             root: root.canonicalize()?,
             idle: Arc::default(),
+            #[cfg(test)]
+            verification_bytes: Arc::default(),
         };
         for dir in ["blobs", "staging", "work"] {
             private_dir(&store.root.join(dir))?;
@@ -196,8 +212,9 @@ impl Store {
 
     fn open_connection(&self) -> Result<Connection> {
         let path = self.root.join("archive.sqlite");
-        if path.symlink_metadata().is_ok() {
-            regular_file(&path)?;
+        if let Ok(metadata) = path.symlink_metadata() {
+            // Closing a non-SQLite descriptor would cancel this process's existing SQLite locks.
+            ensure!(metadata.is_file(), "managed database is not a regular file");
         } else {
             OpenOptions::new()
                 .write(true)
@@ -303,13 +320,34 @@ impl Store {
             blob.digest
         );
         let mut hasher = Sha256::new();
-        std::io::copy(&mut file, &mut hasher)?;
+        let verified_bytes = std::io::copy(&mut file, &mut hasher)?;
+        #[cfg(test)]
+        self.verification_bytes
+            .fetch_add(verified_bytes, std::sync::atomic::Ordering::Relaxed);
+        #[cfg(not(test))]
+        let _ = verified_bytes;
         ensure!(
             format!("{:x}", hasher.finalize()) == blob.digest,
             "corrupt blob {}",
             blob.digest
         );
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn verification_bytes(&self) -> u64 {
+        self.verification_bytes
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub(crate) fn verified_blob(&self, digest: &str) -> Result<VerifiedBlob> {
+        let guard = self.publication_lock()?;
+        self.verify_blob(digest)?;
+        Ok(VerifiedBlob {
+            root: self.root.clone(),
+            digest: digest.into(),
+            _guard: guard,
+        })
     }
 
     pub fn verify_blob(&self, digest: &str) -> Result<Blob> {
@@ -594,3 +632,27 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod verified_blob_tests {
+    use super::*;
+    #[test]
+    fn shared_raw_proof_binds_store_digest_and_rejects_corruption() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let store = Store::open(a.path().join("state")).unwrap();
+        let other = Store::open(b.path().join("state")).unwrap();
+        let blob = store.publish_bytes(b"proof fixture").unwrap();
+        let proof = store.verified_blob(&blob.digest).unwrap();
+        assert!(proof.covers(&store, &blob.digest));
+        assert!(!proof.covers(&other, &blob.digest));
+        assert!(!proof.covers(&store, &crate::digest("different")));
+        drop(proof);
+        std::fs::write(store.blob_path(&blob.digest).unwrap(), b"corrupt").unwrap();
+        assert!(store.verified_blob(&blob.digest).is_err());
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "storage_lock_tests.rs"]
+mod lock_tests;
