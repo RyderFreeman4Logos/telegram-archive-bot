@@ -11,6 +11,10 @@ license = "MIT OR Apache-2.0"
 description = "Recoverable Telegram archiving and validated audio delivery"
 repository = "https://github.com/RyderFreeman4Logos/telegram-archive-bot"
 
+[features]
+default = ["ntn"]
+ntn = []
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }

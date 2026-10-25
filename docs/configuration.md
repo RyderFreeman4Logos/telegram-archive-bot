@@ -16,7 +16,8 @@ name = "ARCHIVE_BOT_TOKEN"
 
 Alternatively use `kind = "file"` and an absolute path to a regular mode-0600
 file. Values are never serialized into snapshots. Both chat and user must be in
-the explicit allowlists. All providers start disabled. Enabled providers require
+the explicit allowlists. Generation, capture and Telegram providers start disabled.
+The Notion adapter is the deliberate default-on exception below. Enabled providers require
 valid credentials before activation; model endpoints may deliberately use a
 local service, unlike arbitrary submitted source URLs.
 
@@ -62,3 +63,69 @@ Local TTS plus multiple speakers is rejected. Speakers are explicit resolved
 voice assignments, not random choices at execution. Speech defaults to Chinese
 voice notes, speed 1.0. Raw synthesis and finalized delivery are separate
 derivations. All output-affecting configuration belongs in the job snapshot.
+
+## Notion publication prerequisites (DA05 / #72)
+
+Normal Cargo builds include `default = ["ntn"]`. Use
+`cargo build --locked --no-default-features` for a build with no Notion transport.
+An old configuration without a `[notion]` section resolves to `enabled = true`,
+with no inferred executable, token or destination. `doctor.notion` reports
+`pending_configuration` and specific missing prerequisites; local `ready` and
+`check-config` do not fail just because Notion is unavailable. A minimal build
+reports `compiled_out`. `enabled = false` returns `disabled` before Notion
+filesystem/credential/probe work and suppresses every Notion subprocess.
+
+```toml
+[notion]
+enabled = true
+executable = "/absolute/path/to/ntn"
+request_seconds = 30
+operation_seconds = 300
+payload_bytes = 450000
+response_bytes = 2000000
+record_bytes = 10000000
+max_blocks = 10000
+max_requests = 256
+max_attempts = 3
+retry_seconds = 30
+
+[notion.token]
+kind = "file"
+name = "/absolute/private/notion-token"
+
+[notion.destination]
+kind = "page"
+id = "YOUR-EXPLICIT-NOTION-PAGE-UUID"
+```
+
+For a data source, set `kind = "data_source"`, its explicit UUID and
+`title_property = "Name"` (the actual title property name). No root is inferred
+from a SOP page, the host's account, or an unrelated workspace. A token may also
+use an explicit `kind = "env"` / `name` reference. Token files must be regular,
+mode 0600 or stricter. References, not values, enter configuration snapshots.
+
+The supported external executable is **ntn 0.22.10**, using API version
+**2026-03-11**. Install and authorize it separately. The application does not
+install/update tools, perform interactive login, open browsers or activate paid
+providers. `ready` means local explicit prerequisites resolve; it does not claim
+remote authorization. Version compatibility is checked at actual adapter use.
+Every API subprocess has a private HOME/config/cache directory, a cleared
+environment, explicit `NOTION_API_TOKEN`, `NOTION_KEYRING=0` and the fixed public
+API endpoint. Ambient keychain/file login, proxies and other host credentials are
+not inherited. Only the selected token is passed, and diagnostics never include
+ntn output or its token value.
+
+Request/response/record sizes, block counts, call counts and an absolute operation
+deadline bound work. Per-request timeouts share that operation deadline. Values
+over the configured bounds fail without truncating source text. `max_attempts`
+and `retry_seconds` describe the durable retry policy for DA06; this adapter
+does not automatically retry writes. A timeout/cancellation after create/append
+dispatch returns `reconcile`, preserving a known page ID where available.
+
+This leaf supplies the concrete adapter and offline readiness diagnostics.
+Autonomous queueing, recovery/reconciliation, destination-pinned reload and worker
+startup belong to [DA06 (#73)](https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/73).
+No manual or automatic Notion write is performed by `doctor`. DA01 typed
+conversion is covered by offline Store-backed fixtures; live destination
+acceptance remains a separate integration check.
+The portable record format is documented in [notion.md](notion.md).

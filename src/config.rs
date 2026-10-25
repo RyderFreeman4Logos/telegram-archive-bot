@@ -54,6 +54,7 @@ pub struct Config {
     pub archive: Archive,
     pub sources: Sources,
     pub daily: Daily,
+    pub notion: Notion,
 }
 
 impl Default for Config {
@@ -75,6 +76,7 @@ impl Default for Config {
             archive: Archive::default(),
             sources: Sources::default(),
             daily: Daily::default(),
+            notion: Notion::default(),
         }
     }
 }
@@ -322,6 +324,53 @@ pub struct Sources {
     pub browser_enabled: bool,
 }
 
+/// DA05 (#72): references only; missing publication prerequisites are nonfatal.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Notion {
+    pub enabled: bool,
+    pub executable: Option<PathBuf>,
+    pub token: Option<SecretRef>,
+    pub destination: Option<NotionDestination>,
+    pub request_seconds: u64,
+    pub operation_seconds: u64,
+    pub payload_bytes: usize,
+    pub response_bytes: usize,
+    pub record_bytes: usize,
+    pub max_blocks: usize,
+    pub max_requests: usize,
+    /// Durable retry policy consumed by DA06; this adapter never retries writes.
+    pub max_attempts: u32,
+    pub retry_seconds: u64,
+}
+
+impl Default for Notion {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            executable: None,
+            token: None,
+            destination: None,
+            request_seconds: 30,
+            operation_seconds: 300,
+            payload_bytes: 450_000,
+            response_bytes: 2_000_000,
+            record_bytes: 10_000_000,
+            max_blocks: 10_000,
+            max_requests: 256,
+            max_attempts: 3,
+            retry_seconds: 30,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum NotionDestination {
+    Page { id: String },
+    DataSource { id: String, title_property: String },
+}
+
 impl Config {
     pub fn default_path() -> PathBuf {
         std::env::var_os("XDG_CONFIG_HOME")
@@ -344,6 +393,7 @@ impl Config {
         self.daily.validate()?;
         ensure!(self.schema_version == 1, "unsupported configuration schema");
         ensure!(self.state_dir.is_absolute(), "state_dir must be absolute");
+        self.notion.validate()?;
         ensure!(
             !(self.synthesis.local && !self.synthesis.speakers.is_empty()),
             "local TTS cannot use multiple speakers"
@@ -738,6 +788,29 @@ impl Default for DailyProvider {
             max_pages: 20,
             page_size: 40,
         }
+    }
+}
+
+impl Notion {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.executable.as_ref().is_none_or(|p| p.is_absolute()),
+            "Notion executable must be an absolute path"
+        );
+        ensure!(
+            self.request_seconds > 0
+                && self.request_seconds <= self.operation_seconds
+                && self.operation_seconds <= 3600
+                && (16_384..=500_000).contains(&self.payload_bytes)
+                && (16_384..=10_000_000).contains(&self.response_bytes)
+                && (1..=100_000_000).contains(&self.record_bytes)
+                && (1..=100_000).contains(&self.max_blocks)
+                && (1..=10_000).contains(&self.max_requests)
+                && (1..=20).contains(&self.max_attempts)
+                && (1..=86400).contains(&self.retry_seconds),
+            "invalid Notion request, payload, operation or retry bounds"
+        );
+        Ok(())
     }
 }
 
