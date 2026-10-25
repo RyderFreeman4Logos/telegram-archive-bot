@@ -161,3 +161,93 @@ pins, accepted-response loss, empty search, cancellation/restart, partial writes
 auth/rate failures, remote edits and operator-supplied wrong pages. These fixtures
 do not prove production Notion worker publication or deployed-runtime behavior;
 those require their own candidate-bound live receipt after dependency integration.
+
+## PDF originals and reader access
+
+**Spec-ID: DA07** — [#74](https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/74).
+A retained PDF observation publishes its original observation/evidence, portable
+`da07-pdf-v1` metadata and available extracted text as ordinary readable blocks.
+This publication finishes before binary work is admitted. Metadata distinguishes
+source/canonical URLs, known originating post/article landing URLs and the direct
+download URL. It records source/revision/observation identity, original byte MIME,
+length, SHA256, filename/title, retrieval time, validation and extraction status.
+No extractable text remains `no_extractable_text`; it is never inferred from a
+successful upload. Direct URLs with signed/expiry parameters are temporary;
+other download URLs have unknown stability. External access is not guaranteed.
+Landing references are bounded to 128 distinct sources with an exact omitted
+count; original canonical records retain all relations.
+
+Each immutable observation page has its own deterministic attachment intent,
+pinned to that page, destination and original digest. Repeated worker turns and
+restarts reuse that intent. A later observation/revision has its own page and
+intent; it does not overwrite earlier metadata or binary proof. Existing verified
+observation pages are admitted through a durable keyset pass of at most 64 rows
+per turn. The normal DA06 completion transaction admits new PDF pages atomically.
+All PDF work shares the DA06 OS lock, durable queue and attempt history. It pauses
+under recovery hold, cancellation, disabled configuration or missing prerequisites.
+
+The pinned ntn 0.22.10 generic API supports single-part `file_uploads` creation,
+`POST file_uploads/ID/send --file PRIVATE_COPY` and a PDF child block containing
+the upload ID. The private copy comes from verified retained CAS bytes, not a new
+origin download or PDF extraction. The PDF-only subprocess directory has a
+bounded 24 MiB allowance; ordinary text operations retain their 16 MB allowance.
+Only validated originals of at most 20 MiB are attempted. Oversize, unavailable or
+rejected/unsupported uploads leave readable text and an explicit binary gap;
+no multipart capability is claimed. Auth and transient failures remain retryable.
+
+Upload and attachment are separate states. Upload ID/expiry and each write's
+intent are committed before dispatch. An uploaded file is attached before expiry.
+Readback checks the stable page's destination, locates the deterministic PDF
+caption through bounded pagination, reads the stable block and retrieves the
+fresh file URL with the public-only HTTP client, without the Notion credential.
+Availability requires actual bytes, byte length and SHA256 to match retained CAS.
+An echoed upload ID, caption, append result or digest is insufficient. Failed or
+missing file readback revokes a previous local availability proof. `verified_at`
+is the time of that observation, not a promise of permanent reader access.
+
+The page's separate `DA07 availability` paragraph is owned by this worker; other
+unmanaged annotations remain untouched. It exposes upload/attachment states,
+stable page/block/upload IDs, verification time/digest and truthful gaps. This
+paragraph is read back after a write. Text/page-only readers can use the original
+record and URL fallback even when they cannot read files. A separately configured
+agent needs no local CAS path, private bot database or bot credential to interpret
+this versioned contract; its own Notion/origin permissions still govern access.
+Signed Notion file URLs are refreshed by stable block ID and are never the only
+durable citation or stored as permanent download pointers.
+
+An unknown PDF/status append is reconciled by its marker, never blindly appended
+again when absent. An unknown upload creation without a returned ID likewise
+remains a visible gap rather than creating another upload. A known expired,
+unattached upload can be replaced from the same retained bytes. Safe automatic
+write attempts use the configured budget and backoff; exhausting it requires an
+operator decision. `notion-reconcile ID` is strictly read-only for PDFs, including
+status blocks. `notion-retry ID` can re-arm PDF continuation only when no attachment
+append, status append or upload creation has an unknown identity. It cannot turn
+an uncertain attachment into a new write. Local original bytes remain retained.
+
+`notion-pdf-status --limit 20 [--after LAST_QUEUE_ID]` reads portable metadata and
+availability without network calls. Unlike ordinary aggregate `status`, this
+explicit content command includes original URLs. Limits are 1–1000; results are
+ordered by queue ID and the last returned ID is the continuation. The public
+`Store::notion_pdf_availability_after` API provides the same bounded contract.
+Manifest producers include its binary gap separately from text coverage using
+DA05 `Coverage.gaps` and stable source/revision/page references. A failed PDF job
+backs off independently and does not block other records or manifest publication;
+DA09 owns automatic day-manifest construction.
+
+Migration 017 extends the DA06 outbox. This isolated DA07 leaf is based on schema
+015 and deliberately contains no placeholder 016. Integration must include the
+actual DA04 migration 016 before 017 and verify a fresh schema-014 upgrade before
+deployment. Full backup retains PDF progress/attempts and original CAS under the
+existing recovery hold. Restoring an older backup reconciles an already attached
+remote file before writing. Semantic restoration rebuilds operational work and
+scans deterministic markers before first attachment; it does not infer remote
+availability from local metadata.
+
+Offline acceptance uses synthetic ntn subprocesses, real SQLite/CAS, a local
+HTTP byte server and the actual durable worker. It covers success, upload/append
+response loss, absent markers, unsupported/oversize/auth/transient failures,
+missing/corrupt attachments, no text, upload expiry, signed URL refresh, old backup
+restore/hold, bounded old-page admission, read-only controls and manifest gaps.
+It does not establish live Notion authorization, a real workspace attachment,
+reader provider compatibility or deployed-runtime behavior.

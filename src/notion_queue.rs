@@ -205,6 +205,7 @@ impl Store {
                         && dest == verified.destination_key,
                     "Notion receipt does not match pinned intent"
                 );
+                crate::notion_pdf::enqueue(&tx, intent, verified)?;
                 (
                     "complete",
                     true,
@@ -313,8 +314,16 @@ impl Store {
             [],
             |r| r.get(0),
         )?;
+        let pdf_upload = conn
+            .prepare("SELECT upload_state,count(*) FROM notion_pdf GROUP BY upload_state")?
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, u64>(1)?)))?
+            .collect::<rusqlite::Result<std::collections::BTreeMap<_, _>>>()?;
+        let pdf_attachment = conn
+            .prepare("SELECT attachment_state,count(*) FROM notion_pdf GROUP BY attachment_state")?
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, u64>(1)?)))?
+            .collect::<rusqlite::Result<std::collections::BTreeMap<_, _>>>()?;
         Ok(
-            json!({"states":counts,"pending":pending,"unbound":unbound,"oldest_pending_age_seconds":oldest.map(|t|now().saturating_sub(t).max(0)),"bootstrap_namespaces_remaining":scans}),
+            json!({"pdf":{"upload":pdf_upload,"attachment":pdf_attachment},"states":counts,"pending":pending,"unbound":unbound,"oldest_pending_age_seconds":oldest.map(|t|now().saturating_sub(t).max(0)),"bootstrap_namespaces_remaining":scans}),
         )
     }
 }

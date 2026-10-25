@@ -11,6 +11,7 @@ pub mod media;
 pub mod network;
 pub mod notion;
 mod notion_ops;
+pub mod notion_pdf;
 mod notion_queue;
 mod notion_records;
 pub mod notion_worker;

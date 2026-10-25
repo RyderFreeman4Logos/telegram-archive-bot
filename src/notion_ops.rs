@@ -48,6 +48,7 @@ impl Store {
         );
         let candidate = candidate.filter(|_| known.is_none());
         tx.execute("UPDATE notion_queue SET state='reconcile',may_have_remote=1,candidate_page_id=?1,available_at=0,error='operator_reconcile' WHERE id=?2",params![candidate,id])?;
+        tx.execute("UPDATE notion_pdf SET read_only=1 WHERE queue_id=?1", [id])?;
         tx.execute("INSERT INTO notion_operator_actions(queue_id,action,created_at,candidate_page_id) VALUES(?1,'reconcile',?2,?3)",params![id,now(),candidate])?;
         tx.commit()?;
         Ok(())
@@ -60,7 +61,15 @@ impl Store {
         })?;
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let changed=tx.execute("UPDATE notion_queue SET state='ready',available_at=0,create_attempts=0,error='operator_retry' WHERE id=?1 AND may_have_remote=0 AND state NOT IN ('creating','complete')",[id])?;
+        let mut changed=tx.execute("UPDATE notion_queue SET state='ready',available_at=0,create_attempts=0,error='operator_retry' WHERE id=?1 AND may_have_remote=0 AND state NOT IN ('creating','complete')",[id])?;
+        if changed == 0 {
+            // PDF continuation is safe only when no attachment append is uncertain and a
+            // status append/upload creation does not have an unknown remote identity.
+            changed=tx.execute("UPDATE notion_queue SET state='ready',available_at=0,create_attempts=0,error='operator_retry' WHERE id=?1 AND kind='pdf_attachment' AND state!='creating' AND EXISTS(SELECT 1 FROM notion_pdf p WHERE p.queue_id=notion_queue.id AND p.attachment_dispatched=0 AND p.upload_state!='creating' AND (p.status_dispatched=0 OR p.status_block_id IS NOT NULL))",[id])?;
+            if changed == 1 {
+                tx.execute("UPDATE notion_pdf SET read_only=0 WHERE queue_id=?1", [id])?;
+            }
+        }
         ensure!(
             changed == 1,
             "only a known no-effect intent can be retried; uncertain writes require reconciliation"
