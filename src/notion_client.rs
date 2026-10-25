@@ -21,12 +21,15 @@ struct Operation<'a> {
     requests: usize,
     write_started: bool,
     page_id: Option<String>,
+    observer: &'a ProgressObserver<'a>,
+    written_blocks: usize,
 }
 
 impl<'a> Operation<'a> {
     async fn new(
         adapter: &'a Adapter,
         cancel: &'a CancellationToken,
+        observer: &'a ProgressObserver<'a>,
     ) -> Result<Self, PublicationError> {
         if cancel.is_cancelled() {
             return Err(Failure::Cancelled.into());
@@ -55,6 +58,8 @@ impl<'a> Operation<'a> {
             requests: 0,
             write_started: false,
             page_id: None,
+            observer,
+            written_blocks: 0,
         };
         let version = operation.tool(vec!["--version".into()], false).await?;
         if version.trim() != NTN_VERSION {
@@ -69,6 +74,18 @@ impl<'a> Operation<'a> {
             page_id: self.page_id.clone(),
             retry_after_seconds: None,
         }
+    }
+
+    fn progress(&self, verified_blocks: usize) -> Result<(), PublicationError> {
+        if let Some(page_id) = &self.page_id {
+            (self.observer)(&PublicationProgress {
+                page_id: page_id.clone(),
+                written_blocks: self.written_blocks,
+                verified_blocks,
+            })
+            .map_err(|_| self.uncertain(Failure::Unavailable))?;
+        }
+        Ok(())
     }
 
     fn uncertain(&self, otherwise: Failure) -> PublicationError {
@@ -219,7 +236,9 @@ impl<'a> Operation<'a> {
             }
         }
         args.extend(["--notion-version".into(), API_VERSION.into()]);
-        let result = self.tool(args, method != "GET").await;
+        let result = self
+            .tool(args, method != "GET" && path != "v1/search")
+            .await;
         if body.is_some() {
             std::fs::remove_file(&body_path).map_err(|_| self.uncertain(Failure::Unavailable))?;
         }
@@ -284,7 +303,10 @@ impl<'a> Operation<'a> {
             .request(&format!("v1/pages/{page_id}"), "GET", None, None)
             .await?;
         self.check_page(&page, page_id, plan)?;
+        self.progress(0)?;
         let mut returned = Vec::new();
+        let mut block_ids = Vec::new();
+        let mut unique_blocks = BTreeSet::new();
         let mut cursor: Option<String> = None;
         let mut seen = BTreeSet::new();
         while returned.len() < plan.managed_blocks.len() {
@@ -331,8 +353,18 @@ impl<'a> Operation<'a> {
                 if plan.managed_blocks.get(returned.len()) != Some(&block) {
                     return Err(self.error(Failure::Conflict));
                 }
+                let id = value
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .and_then(notion_id)
+                    .ok_or_else(|| self.error(Failure::Conflict))?;
+                if !unique_blocks.insert(id.clone()) {
+                    return Err(self.error(Failure::Conflict));
+                }
+                block_ids.push(id);
                 returned.push(block);
             }
+            self.progress(returned.len())?;
             if returned.len() == plan.managed_blocks.len() {
                 break;
             }
@@ -362,6 +394,7 @@ impl<'a> Operation<'a> {
             canonical_digest: digest,
             content_sha256: plan.content_sha256.clone(),
             schema_version: SCHEMA_VERSION,
+            block_ids,
             destination_key: self
                 .adapter
                 .config
@@ -458,10 +491,11 @@ pub(super) async fn create(
     adapter: &Adapter,
     record: &Record,
     cancel: &CancellationToken,
+    observer: &ProgressObserver<'_>,
 ) -> Result<VerifiedPage, PublicationError> {
     let plan = record.plan(&adapter.config)?;
     let bodies = requests(&plan, &adapter.config)?; // validate every request size before creating anything
-    let mut operation = Operation::new(adapter, cancel).await?;
+    let mut operation = Operation::new(adapter, cancel, observer).await?;
     // Token checks apply before any publication, including a later append containing the secret.
     let original =
         serde_json::to_value(record).map_err(|_| operation.error(Failure::InvalidPayload))?;
@@ -482,6 +516,11 @@ pub(super) async fn create(
         .ok_or_else(|| operation.error(Failure::Reconcile))?;
     operation.page_id = Some(page_id.clone());
     operation.check_page(&page, &page_id, &plan)?;
+    operation.written_blocks = bodies
+        .first()
+        .and_then(|b| b["children"].as_array())
+        .map_or(0, Vec::len);
+    operation.progress(0)?;
     for body in bodies.iter().skip(1) {
         operation
             .request(
@@ -491,6 +530,8 @@ pub(super) async fn create(
                 None,
             )
             .await?;
+        operation.written_blocks += body["children"].as_array().map_or(0, Vec::len);
+        operation.progress(0)?;
     }
     operation.readback(&page_id, &plan).await
 }
@@ -511,10 +552,90 @@ pub(super) async fn verify(
     page_id: &str,
     record: &Record,
     cancel: &CancellationToken,
+    observer: &ProgressObserver<'_>,
 ) -> Result<VerifiedPage, PublicationError> {
     let page_id = notion_id(page_id).ok_or(Failure::InvalidPayload)?;
     let plan = record.plan(&adapter.config)?;
-    let mut operation = Operation::new(adapter, cancel).await?;
+    let mut operation = Operation::new(adapter, cancel, observer).await?;
     operation.page_id = Some(page_id.clone());
     operation.readback(&page_id, &plan).await
+}
+
+pub(super) async fn find(
+    adapter: &Adapter,
+    record: &Record,
+    cancel: &CancellationToken,
+    observer: &ProgressObserver<'_>,
+) -> Result<Option<VerifiedPage>, PublicationError> {
+    let plan = record.plan(&adapter.config)?;
+    let mut operation = Operation::new(adapter, cancel, observer).await?;
+    let destination = adapter
+        .config
+        .destination
+        .as_ref()
+        .ok_or(Failure::PendingConfiguration)?;
+    let (field, parent, property) = destination_fields(destination);
+    let mut cursor: Option<String> = None;
+    let mut cursors = BTreeSet::new();
+    let mut matches = BTreeSet::new();
+    loop {
+        let mut body = json!({"query":plan.page_title,"filter":{"property":"object","value":"page"},"page_size":100});
+        if let Some(cursor) = &cursor {
+            body["start_cursor"] = json!(cursor);
+        }
+        let response = operation
+            .request("v1/search", "POST", Some(&body), None)
+            .await?;
+        let results = response
+            .get("results")
+            .and_then(Value::as_array)
+            .filter(|r| r.len() <= 100)
+            .ok_or_else(|| operation.error(Failure::InvalidOutput))?;
+        if response["object"] != "list" {
+            return Err(operation.error(Failure::InvalidOutput));
+        }
+        for page in results {
+            let title = page
+                .get("properties")
+                .and_then(|v| v.get(property))
+                .and_then(|v| v.get("title"))
+                .and_then(rich_text);
+            let actual_parent = page
+                .get("parent")
+                .and_then(|v| v.get(field))
+                .and_then(Value::as_str)
+                .and_then(notion_id);
+            if title.as_deref() == Some(&plan.page_title) && actual_parent == notion_id(parent) {
+                let id = page
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .and_then(notion_id)
+                    .ok_or_else(|| operation.error(Failure::InvalidOutput))?;
+                operation.check_page(page, &id, &plan)?;
+                matches.insert(id);
+                if matches.len() > 1 {
+                    return Err(operation.error(Failure::Conflict));
+                }
+            }
+        }
+        match response.get("has_more").and_then(Value::as_bool) {
+            Some(false) => break,
+            Some(true) if !results.is_empty() => {}
+            _ => return Err(operation.error(Failure::InvalidOutput)),
+        }
+        let next = response
+            .get("next_cursor")
+            .and_then(Value::as_str)
+            .filter(|c| !c.is_empty() && c.len() <= 512 && !c.chars().any(char::is_control))
+            .ok_or_else(|| operation.error(Failure::InvalidOutput))?;
+        if !cursors.insert(next.to_owned()) {
+            return Err(operation.error(Failure::InvalidOutput));
+        }
+        cursor = Some(next.to_owned());
+    }
+    let Some(page) = matches.into_iter().next() else {
+        return Ok(None);
+    };
+    operation.page_id = Some(page.clone());
+    operation.readback(&page, &plan).await.map(Some)
 }

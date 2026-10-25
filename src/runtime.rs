@@ -708,10 +708,6 @@ pub async fn serve(path: PathBuf, shutdown: CancellationToken) -> Result<()> {
     let mut initial = Config::load(&path)?;
     disable_missing_optional(&mut initial);
     initial.check_secrets()?;
-    ensure!(
-        initial.telegram.enabled || initial.daily.enabled,
-        "run requires Telegram or daily planning to be enabled"
-    );
     let store = Store::open(&initial.state_dir)?;
     ensure!(
         !store.recovery_paused()?,
@@ -746,6 +742,11 @@ pub async fn serve(path: PathBuf, shutdown: CancellationToken) -> Result<()> {
     let syntheses = Arc::new(Semaphore::new(limits.syntheses));
     let finalizers = Arc::new(Semaphore::new(limits.finalizers));
     let mut workers = JoinSet::new();
+    workers.spawn(crate::notion_worker::serve(
+        store.clone(),
+        config.clone(),
+        shutdown.clone(),
+    ));
     {
         let store = store.clone();
         let relay = relay.clone();
@@ -802,6 +803,11 @@ pub async fn serve(path: PathBuf, shutdown: CancellationToken) -> Result<()> {
     }
     let mut hup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
     let mut interval = tokio::time::interval(Duration::from_secs(60));
+    crate::operator::log(
+        "service_started",
+        None,
+        json!({"telegram_enabled":telegram_enabled}),
+    );
     loop {
         tokio::select! {_=shutdown.cancelled()=>break,_=hup.recv()=>{let mut manager=config.write().await;let current=manager.snapshot();let next=Config::load(&path).map(|mut n|{disable_missing_optional(&mut n);n});if next.as_ref().is_ok_and(|n|n.limits.downloads==limits.downloads&&n.limits.models==limits.models&&n.limits.syntheses==limits.syntheses&&n.limits.finalizers==limits.finalizers&&n.limits.deliveries==limits.deliveries&&n.telegram.enabled==current.telegram.enabled&&store.validate_daily_config(n).is_ok())&&next.is_ok_and(|n|manager.activate(n).is_ok()){graph_cache().lock().map_err(|_|Failure::Internal)?.clear();crate::operator::log("reload_applied",None,json!({"config_fingerprint":manager.snapshot().fingerprint()?}));}else{crate::operator::log("reload_rejected",None,json!({"reason":"invalid-config-or-admission-change-requires-restart"}));}},_=interval.tick()=>crate::operator::log("metrics",None,crate::operator::metrics(&store)?),result=workers.join_next()=>{shutdown.cancel();if let Some(result)=result{result??;}break;}}
     }

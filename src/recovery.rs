@@ -374,6 +374,10 @@ impl Store {
             [now()],
         )?;
         tx.execute("UPDATE daily_windows SET state='partial',generation=generation+1,lease_until=NULL,reason='restored_interrupted' WHERE state='collecting'",[])?;
+        // A backup can predate a successful external write. Never recreate an unresolved intent.
+        tx.execute("UPDATE notion_binding SET bootstrap_reconcile=1", [])?;
+        tx.execute("UPDATE notion_attempts SET finished_at=?1,outcome='restored_reconcile' WHERE finished_at IS NULL", [now()])?;
+        tx.execute("UPDATE notion_queue SET state='reconcile',may_have_remote=1,available_at=0,error='restored_uncertain' WHERE state!='complete'", [])?;
         tx.execute("UPDATE jobs SET state='paused',lease_until=NULL,generation=generation+1,error='restored_paused' WHERE state IN ('queued','running','retryable','paused')",[])?;
         tx.execute("UPDATE delivery_attempts SET state='unknown',finished_at=?1,error='restored_uncertain' WHERE state='sending'",[now()])?;
         tx.execute("UPDATE outbox SET state='unknown',lease_until=NULL,error='restored_uncertain' WHERE state='sending'",[])?;
@@ -866,6 +870,15 @@ impl Store {
                     "activity observation path mismatch"
                 );
                 crate::activities::save_observation(&tx, &observation)?;
+                consumed.insert(path.clone());
+            }
+            if path.starts_with("archive-v1/notion-documents/") {
+                let record: crate::notion::Record = serde_json::from_value(value.clone())?;
+                let key = crate::notion_records::save_document(&tx, &record)?;
+                ensure!(
+                    *path == format!("archive-v1/notion-documents/{key}.json"),
+                    "Notion document path mismatch"
+                );
                 consumed.insert(path.clone());
             }
         }

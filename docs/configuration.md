@@ -122,10 +122,13 @@ and `retry_seconds` describe the durable retry policy for DA06; this adapter
 does not automatically retry writes. A timeout/cancellation after create/append
 dispatch returns `reconcile`, preserving a known page ID where available.
 
-This leaf supplies the concrete adapter and offline readiness diagnostics.
-Autonomous queueing, recovery/reconciliation, destination-pinned reload and worker
-startup belong to [DA06 (#73)](https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/73).
-No manual or automatic Notion write is performed by `doctor`. DA01 typed
-conversion is covered by offline Store-backed fixtures; live destination
-acceptance remains a separate integration check.
-The portable record format is documented in [notion.md](notion.md).
+[DA06 (#73)](https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/73)
+adds automatic durable publication to `run`, including headless operation with
+Telegram disabled. `SIGHUP` cancels/settles the previous Notion snapshot, and the
+worker resumes when explicit local prerequisites resolve. Destination changes
+bind only unbound/new work; old intent destinations remain immutable. Missing
+prerequisites and disabled/compiled-out Notion never launch ntn. `doctor` remains
+offline; its Notion readiness is separate from local archive readiness. See
+[notion.md](notion.md) for queue states, bounded bootstrap, uncertain-write
+reconciliation, operator controls and recovery. Live publication of this worker
+requires a separate candidate-bound acceptance receipt.
