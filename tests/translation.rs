@@ -813,13 +813,23 @@ shutil.copyfile(Path(__file__).with_suffix('.mp3'),a[a.index('--output')+1])
             .count(),
         3
     );
-    let before = telegram_archive_bot::operator::metrics(&store)?;
+    let mut before = telegram_archive_bot::operator::metrics(&store)?;
     assert_eq!(before["queues"]["outbox"]["pending"], 8);
     assert_eq!(before["job_retries"], 0);
+    let before_age = before["notion_publication"]["oldest_pending_age_seconds"]
+        .take()
+        .as_u64()
+        .expect("fixture has pending Notion records");
+    tokio::time::sleep(Duration::from_millis(1100)).await;
     drop(store);
     let restarted = Store::open(&config.state_dir)?;
-    let after = runtime::replay(&config, &[], &cancel).await?;
-    assert_eq!(before, after);
+    let mut after = runtime::replay(&config, &[], &cancel).await?;
+    let after_age = after["notion_publication"]["oldest_pending_age_seconds"]
+        .take()
+        .as_u64()
+        .expect("pending queue age survives restart");
+    assert!(after_age > before_age, "elapsed queue age must advance");
+    assert_eq!(before, after, "all durable status fields survive restart");
     assert_eq!(server.count(), 3);
     let backup = root.path().join("backup");
     restarted.backup(&backup)?;
