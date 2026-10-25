@@ -284,6 +284,26 @@ enforce expanded byte limits before any child invocation, and reopen an old v1
 intent to prove its pins survive without blocking later work. The retained first
 live PDF run failed text verification and performed no PDF upload. These offline
 results do not turn that run into a success or establish corrected live access.
+
+**DA05 / [#93](https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/93)**:
+an actual `ntn` GET readback also omitted U+2028 LINE SEPARATOR from a raw v1
+captured body. This locates the loss at the observed publication/readback
+boundary; it does not isolate Notion server normalization from `ntn` behavior.
+The same reversible JSON representation now explicitly escapes U+2028 and
+U+2029 PARAGRAPH SEPARATOR in content and metadata. U+2029 is a conservative
+same-class protection with synthetic lossy-boundary coverage, rather than a
+claim of observed loss in that live record. Ordinary v1 text without these
+separators or the S87 controls remains byte-identical; LF/tab remain unchanged.
+
+Separator regressions exercise the actual adapter and child-tool boundary,
+independent JSON decode and the original UTF-8 hash, metadata-only selection,
+UTF-16 chunk bounds and expanded-byte refusal before dispatch. A pinned legacy
+v1 intent retains its old record, digest, page ID and attempt history; reopening
+it cannot adopt a changed representation or automatically create another page.
+Historical remote conflicts remain explicit, with the complete canonical body
+retained locally. A later corrected synthetic publication proves only its own
+round trip and does not repair or validate an earlier conflicting page.
+
 ## Daily reader handoffs
 
 DA09 derives immutable daily roots and paginated exhaustive indexes through this
