@@ -3,6 +3,7 @@ pub mod batch;
 mod browser;
 pub mod commands;
 pub mod config;
+pub mod daily_capture;
 pub mod delivery;
 pub mod documents;
 pub mod egress;

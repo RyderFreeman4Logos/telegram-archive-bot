@@ -428,6 +428,21 @@ impl Store {
     /// One writer transaction makes source capture, aliases, activity evidence and
     /// its revision-pinned view converge across identical retries and workers.
     pub fn record_activity(&self, input: &ActivityCapture) -> Result<ActivityObservation> {
+        self.record_activity_impl(input, None)
+    }
+    pub(crate) fn record_activity_with_view(
+        &self,
+        input: &ActivityCapture,
+        view: &crate::sources::View,
+        source_observation_id: i64,
+    ) -> Result<ActivityObservation> {
+        self.record_activity_impl(input, Some((view, source_observation_id)))
+    }
+    fn record_activity_impl(
+        &self,
+        input: &ActivityCapture,
+        supplied_view: Option<(&crate::sources::View, i64)>,
+    ) -> Result<ActivityObservation> {
         input.activity_time.validate()?;
         input.source_time.validate()?;
         let run_id = input.discovery.id()?;
@@ -448,7 +463,10 @@ impl Store {
             source: input.capture.identity.clone(),
         };
         let id = observation_id(&activity, &input.discovery, &input.observation_key)?;
-        let input_digest = digest(serde_json::to_vec(input)?);
+        let input_digest = match supplied_view {
+            Some((_, observation)) => digest(serde_json::to_vec(&(input, observation))?),
+            None => digest(serde_json::to_vec(input)?),
+        };
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let prior: Option<String> = tx
@@ -472,13 +490,30 @@ impl Store {
             [],
             |r| r.get(0),
         )?;
-        self.capture_in_tx(&tx, &input.capture)?;
-        let source_observation_id = tx.query_row(
-            "SELECT MAX(id) FROM observations WHERE source_id=?1",
-            [activity.source.id()],
-            |r| r.get(0),
-        )?;
-        let view = self.create_view_in_tx(&tx, &activity.source, input.view_policy.clone())?;
+        let source_observation_id = if let Some((_, observation)) = supplied_view {
+            observation
+        } else {
+            self.capture_in_tx(&tx, &input.capture)?;
+            tx.query_row(
+                "SELECT MAX(id) FROM observations WHERE source_id=?1",
+                [activity.source.id()],
+                |r| r.get(0),
+            )?
+        };
+        let view = if let Some((view, _)) = supplied_view {
+            ensure!(
+                view.root_id == activity.source.id()
+                    && view
+                        .members
+                        .first()
+                        .is_some_and(|m| m.source_id == view.root_id),
+                "activity capture view root mismatch"
+            );
+            crate::sources::save_view(&tx, view)?;
+            view.clone()
+        } else {
+            self.create_view_in_tx(&tx, &activity.source, input.view_policy.clone())?
+        };
         let member = &view.members[0];
         let observation = ActivityObservation {
             schema_version: 1,

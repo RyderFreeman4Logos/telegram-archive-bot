@@ -242,11 +242,45 @@ fn schema_eleven_upgrade_indexes_source_lookups_without_changing_results() -> Re
     store.capture(&partial)?;
     store.capture(&fixture("200", "Unrelated later observation"))?;
     drop(store);
-    let database = dir.path().join("archive.sqlite");
+    let current_database = dir.path().join("archive.sqlite");
+    let old = temp()?;
+    let database = old.path().join("archive.sqlite");
     let conn = rusqlite::Connection::open(&database)?;
-    // Construct the old schema too, rather than only lowering the version on a
-    // current schema (which would try to recreate later migrations' tables).
-    conn.execute_batch("DROP TABLE daily_pages; DROP TABLE daily_attempts; DROP TABLE daily_windows; DROP TABLE daily_account_resolutions; DROP TABLE daily_watch_bindings; DROP TABLE daily_admission_cursors; DROP TABLE daily_scheduler; DROP TABLE activity_observations; DROP TABLE activities; DROP TABLE discovery_runs; DROP TABLE account_observations; DROP TABLE accounts; DROP INDEX IF EXISTS observations_source; PRAGMA user_version=11;")?;
+    std::fs::set_permissions(&database, Permissions::from_mode(0o600))?;
+    // Build the historical schema itself; later migrations must not leak into this fixture.
+    for migration in [
+        include_str!("../migrations/001_canonical.sql"),
+        include_str!("../migrations/002_revision_quality.sql"),
+        include_str!("../migrations/003_ingress.sql"),
+        include_str!("../migrations/004_job_recovery.sql"),
+        include_str!("../migrations/005_derivatives.sql"),
+        include_str!("../migrations/006_immutable_artifacts.sql"),
+        include_str!("../migrations/007_delivery_attempts.sql"),
+        include_str!("../migrations/008_projection.sql"),
+        include_str!("../migrations/009_recovery.sql"),
+        include_str!("../migrations/010_transforms.sql"),
+        include_str!("../migrations/011_message_origins.sql"),
+    ] {
+        conn.execute_batch(migration)?;
+    }
+    conn.execute(
+        "ATTACH DATABASE ?1 AS fixture_current",
+        [current_database.to_string_lossy().as_ref()],
+    )?;
+    conn.execute_batch("BEGIN; PRAGMA defer_foreign_keys=ON;")?;
+    for table in [
+        "sources",
+        "source_revisions",
+        "observations",
+        "source_aliases",
+        "relations",
+    ] {
+        conn.execute_batch(&format!(
+            "INSERT INTO {table} SELECT * FROM fixture_current.{table}"
+        ))?;
+    }
+    conn.execute_batch("COMMIT; DETACH DATABASE fixture_current; PRAGMA user_version=11;")?;
+    let dir = old;
     let queries = [
         "SELECT status FROM observations WHERE source_id=?1 ORDER BY id DESC LIMIT 1",
         "SELECT revision_id FROM observations WHERE source_id=?1 AND revision_id IS NOT NULL ORDER BY CASE status WHEN 'complete' THEN 0 ELSE 1 END,id DESC LIMIT 1",

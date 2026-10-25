@@ -183,3 +183,12 @@ released; it does not perform provider requests or sends. Older supported
 databases acquire empty planner tables. Semantic Git recovery retains DA01
 activity/source history but **does not reconstruct operational daily plans or
 collection checkpoints**; use a full backup for scheduling continuity.
+
+
+## Original-content capture
+
+The independent [DA04 capture worker](daily-content-capture.md) consumes committed
+activity discoveries, preserving each account/day origin while coalescing source
+hydration globally. It can run with the planner and Telegram disabled. Timeline
+collection supplies discovery records; capture does not infer a completed day
+from a hydrated post or perform additional account enumeration.
