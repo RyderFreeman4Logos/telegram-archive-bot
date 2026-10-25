@@ -9,6 +9,7 @@ pub mod egress;
 pub mod jobs;
 pub mod media;
 pub mod network;
+pub mod notion;
 pub mod operator;
 pub mod process;
 pub mod projection;
