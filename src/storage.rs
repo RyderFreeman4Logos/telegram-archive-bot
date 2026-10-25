@@ -209,8 +209,9 @@ impl Store {
 
     fn open_connection(&self) -> Result<Connection> {
         let path = self.root.join("archive.sqlite");
-        if path.symlink_metadata().is_ok() {
-            regular_file(&path)?;
+        if let Ok(metadata) = path.symlink_metadata() {
+            // Closing a non-SQLite descriptor would cancel this process's existing SQLite locks.
+            ensure!(metadata.is_file(), "managed database is not a regular file");
         } else {
             OpenOptions::new()
                 .write(true)
@@ -648,3 +649,7 @@ mod verified_blob_tests {
         assert!(store.verified_blob(&blob.digest).is_err());
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "storage_lock_tests.rs"]
+mod lock_tests;
