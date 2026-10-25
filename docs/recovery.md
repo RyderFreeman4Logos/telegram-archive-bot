@@ -86,7 +86,13 @@ published destination. These limits do not relax path or committed-object checks
 
 The current export schema restores source identities, aliases, exact immutable
 revisions (including original newline reconstruction), observed relationships,
-views and exported text derivatives. Original observation IDs retain view-edge
+views, DA01 account/activity discovery evidence and exported text derivatives.
+Activity observations retain their original source-observation and revision/view
+pins, including unavailable targets and independent activity/publication time
+evidence. Older exports without activity records remain supported. Full schema
+13 backups also retain every account/activity table; restoring a supported older
+database adds the empty tables without changing existing source/view records.
+Original observation IDs retain view-edge
 provenance. The current revision is selected from the latest available complete
 observation, or partial observation when no complete observation exists.
 

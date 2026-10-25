@@ -850,6 +850,20 @@ impl Store {
                 consumed.insert(path.clone());
             }
         }
+        // DA01 manifests reference the same already-restored source observations
+        // and pinned views, rather than importing a second copy of source text.
+        for (path, value) in &records {
+            if path.starts_with("archive-v1/activity-observations/") {
+                let observation: crate::activities::ActivityObservation =
+                    serde_json::from_value(value.clone())?;
+                ensure!(
+                    *path == format!("archive-v1/activity-observations/{}.json", observation.id),
+                    "activity observation path mismatch"
+                );
+                crate::activities::save_observation(&tx, &observation)?;
+                consumed.insert(path.clone());
+            }
+        }
         ensure!(
             consumed.len() == files.len() && files.keys().all(|k| consumed.contains(k)),
             "unknown or unconsumed semantic export files"
