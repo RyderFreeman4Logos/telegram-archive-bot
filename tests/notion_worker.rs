@@ -119,6 +119,92 @@ fn worker_fixture() -> (
 
 #[cfg(feature = "ntn")]
 #[tokio::test]
+async fn notion_settlement_records_private_failure_and_recovery_without_gh() {
+    let (root, store, config) = worker_fixture();
+    store
+        .capture(&capture("888", "PRIVATE_NOTION_BODY"))
+        .unwrap();
+    std::fs::write(root.path().join("mode"), "accepted_lost").unwrap();
+    telegram_archive_bot::notion_worker::tick(
+        &store,
+        &config,
+        &tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let conn = rusqlite::Connection::open(store.root().join("archive.sqlite")).unwrap();
+    let failures: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM failure_events WHERE outcome='failed'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(failures, 1);
+    let sample: String = conn
+        .query_row("SELECT public_sample FROM failure_events", [], |r| r.get(0))
+        .unwrap();
+    assert!(!sample.contains("PRIVATE_NOTION_BODY") && !sample.contains("x.com"));
+    assert_eq!(
+        store.failure_report_status(20).unwrap()["reports"],
+        serde_json::json!([])
+    );
+    std::fs::write(root.path().join("mode"), "normal").unwrap();
+    conn.execute("UPDATE notion_queue SET available_at=0", [])
+        .unwrap();
+    drain_until(&store, &config, |m| m["states"]["complete"] == 2).await;
+    let recovered: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM failure_events WHERE outcome='recovered'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(recovered, 1);
+    assert_eq!(
+        conn.query_row("SELECT consecutive FROM failure_incidents", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+
+#[cfg(feature = "ntn")]
+#[tokio::test]
+async fn retrying_the_same_invalid_notion_record_keeps_accounting_idempotent() {
+    let (_root, store, mut config) = worker_fixture();
+    store
+        .capture(&capture("889", "Private canonical content"))
+        .unwrap();
+    let conn = rusqlite::Connection::open(store.root().join("archive.sqlite")).unwrap();
+    // One fixture intent isolates repeated no-dispatch validation of the same immutable record.
+    conn.execute("DELETE FROM notion_queue WHERE kind='revision'", [])
+        .unwrap();
+    config.notion.record_bytes = 1;
+    telegram_archive_bot::notion_worker::tick(
+        &store,
+        &config,
+        &tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let id: String = conn
+        .query_row("SELECT id FROM notion_queue", [], |r| r.get(0))
+        .unwrap();
+    store.retry_notion(&id).unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    telegram_archive_bot::notion_worker::tick(
+        &store,
+        &config,
+        &tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(store.failure_report_status(10).unwrap()["events"], 1);
+}
+
+#[cfg(feature = "ntn")]
+#[tokio::test]
 async fn worker_publishes_actual_source_changes_and_verifies_receipts() {
     let (root, store, config) = worker_fixture();
     let mut captured = capture("100", "完整原文 🌍\n");

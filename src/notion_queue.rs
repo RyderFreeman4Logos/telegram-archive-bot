@@ -183,8 +183,21 @@ impl Store {
     }
 
     pub(crate) fn notion_invalid_record(&self, intent: &Intent) -> Result<()> {
-        let changed = self.connection()?.execute("UPDATE notion_queue SET state='conflict',error='record_invalid_or_over_limit' WHERE id=?1 AND attempts=?2 AND state NOT IN ('creating','complete')", params![intent.id,intent.attempts])?;
+        let mut conn = self.connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = tx.execute("UPDATE notion_queue SET state='conflict',error='record_invalid_or_over_limit' WHERE id=?1 AND attempts=?2 AND state NOT IN ('creating','complete')", params![intent.id,intent.attempts])?;
         ensure!(changed == 1, "Notion invalid record ownership changed");
+        crate::failure_reporting::notion_settled(
+            &tx,
+            &intent.id,
+            intent.attempts,
+            &Err(PublicationError {
+                state: Failure::InvalidPayload,
+                page_id: None,
+                retry_after_seconds: None,
+            }),
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -205,6 +218,7 @@ impl Store {
                         && dest == verified.destination_key,
                     "Notion receipt does not match pinned intent"
                 );
+                crate::notion_pdf::enqueue(&tx, intent, verified)?;
                 (
                     "complete",
                     true,
@@ -268,6 +282,7 @@ impl Store {
             )?;
         }
         tx.execute("UPDATE notion_attempts SET finished_at=?1,outcome=?2,page_id=?3,receipt=?4 WHERE queue_id=?5 AND number=?6 AND finished_at IS NULL",params![now(),state,page,receipt,intent.id,intent.attempts])?;
+        crate::failure_reporting::notion_settled(&tx, &intent.id, intent.attempts, result)?;
         tx.commit()?;
         Ok(())
     }
@@ -313,8 +328,16 @@ impl Store {
             [],
             |r| r.get(0),
         )?;
+        let pdf_upload = conn
+            .prepare("SELECT upload_state,count(*) FROM notion_pdf GROUP BY upload_state")?
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, u64>(1)?)))?
+            .collect::<rusqlite::Result<std::collections::BTreeMap<_, _>>>()?;
+        let pdf_attachment = conn
+            .prepare("SELECT attachment_state,count(*) FROM notion_pdf GROUP BY attachment_state")?
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, u64>(1)?)))?
+            .collect::<rusqlite::Result<std::collections::BTreeMap<_, _>>>()?;
         Ok(
-            json!({"states":counts,"pending":pending,"unbound":unbound,"oldest_pending_age_seconds":oldest.map(|t|now().saturating_sub(t).max(0)),"bootstrap_namespaces_remaining":scans}),
+            json!({"pdf":{"upload":pdf_upload,"attachment":pdf_attachment},"states":counts,"pending":pending,"unbound":unbound,"oldest_pending_age_seconds":oldest.map(|t|now().saturating_sub(t).max(0)),"bootstrap_namespaces_remaining":scans}),
         )
     }
 }

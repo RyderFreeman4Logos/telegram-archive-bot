@@ -44,10 +44,22 @@ enum Command {
     Doctor,
     /// Print local queue, retention, cache and projection metrics.
     Status,
+    /// List bounded private-accounting counts and report states, without source bodies.
+    FailureReportStatus {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
     /// List bounded publication identities and states without bodies or credentials.
     NotionList {
         #[arg(long, default_value_t = 20)]
         limit: usize,
+    },
+    /// Read portable retained-PDF metadata and availability; includes original URLs, no network.
+    NotionPdfStatus {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[arg(long)]
+        after: Option<String>,
     },
     /// Schedule read-only remote-body reconciliation; an optional page ID is untrusted input.
     NotionReconcile {
@@ -305,6 +317,16 @@ fn main() -> anyhow::Result<()> {
                 Command::NotionList { limit } => println!(
                     "{}",
                     serde_json::to_string_pretty(&store.notion_list(limit)?)?
+                ),
+                Command::NotionPdfStatus { limit, after } => println!(
+                    "{}",
+                    serde_json::to_string_pretty(
+                        &store.notion_pdf_availability_after(limit, after.as_deref())?
+                    )?
+                ),
+                Command::FailureReportStatus { limit } => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&store.failure_report_status(limit)?)?
                 ),
                 Command::NotionReconcile { id, page_id } => {
                     store.reconcile_notion(&id, page_id.as_deref())?;

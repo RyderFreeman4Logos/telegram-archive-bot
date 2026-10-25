@@ -1159,3 +1159,225 @@ async fn retry_with_changed_limits_rebuilds_bounded_view_from_cached_nodes() -> 
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn failure_reporting_producer_capture_retains_typed_gaps_and_verified_recovery()
+-> anyhow::Result<()> {
+    use futures_util::FutureExt;
+    use telegram_archive_bot::jobs::Failure;
+    struct ReportingCollector(std::sync::Mutex<Option<Failure>>);
+    impl telegram_archive_bot::daily_capture::Collector for ReportingCollector {
+        fn collect<'a>(
+            &'a self,
+            _: &'a Store,
+            _: &'a Config,
+            identity: &'a Identity,
+            _: &'a tokio_util::sync::CancellationToken,
+        ) -> futures_util::future::BoxFuture<'a, anyhow::Result<Vec<Capture>>> {
+            async move {
+                if let Some(failure) = *self.0.lock().unwrap() {
+                    return Err(failure.into());
+                }
+                let mut capture =
+                    body_capture(Some("Verified retained original"), FetchStatus::Complete);
+                capture.identity = identity.clone();
+                capture.relations.clear();
+                Ok(vec![capture])
+            }
+            .boxed()
+        }
+    }
+    for (failure, actionable) in [
+        (Failure::Network, 1),
+        (Failure::RateLimited, 0),
+        (Failure::ToolMissing, 0),
+    ] {
+        let root = private_temp()?;
+        let store = Store::open(root.path().join("state"))?;
+        let mut config = Config {
+            state_dir: store.root().into(),
+            ..Config::default()
+        };
+        config.daily.capture.enabled = true;
+        config.limits.max_attempts = 1;
+        config.failure_reporting.enabled = false;
+        let mut origin = discovery("101", "10", "PRIVATE_WATCHLIST");
+        origin.handle = Some("PRIVATE_ACCOUNT".into());
+        store.record_activity(&origin)?;
+        let collector = ReportingCollector(std::sync::Mutex::new(Some(failure)));
+        let cancel = tokio_util::sync::CancellationToken::new();
+        telegram_archive_bot::daily_capture::step_with(&store, &config, &collector, &cancel)
+            .await?;
+        let conn = rusqlite::Connection::open(store.root().join("archive.sqlite"))?;
+        let counts:(i64,i64)=conn.query_row("SELECT count(*),coalesce(sum(actionable),0) FROM failure_incidents WHERE json_extract(metadata,'$.subsystem')='capture'",[],|r|Ok((r.get(0)?,r.get(1)?)))?;
+        assert_eq!(
+            counts,
+            (1, actionable),
+            "capture errors require typed durable classification"
+        );
+        let public: String = conn.query_row(
+            "SELECT public_sample FROM failure_events LIMIT 1",
+            [],
+            |r| r.get(0),
+        )?;
+        assert!(!public.contains("PRIVATE_") && !public.contains("https://"));
+        drop(conn);
+        *collector.0.lock().unwrap() = None;
+        store.retry_activity_capture(&config, &Identity::x("10")?.id())?;
+        telegram_archive_bot::daily_capture::step_with(&store, &config, &collector, &cancel)
+            .await?;
+        let conn = rusqlite::Connection::open(store.root().join("archive.sqlite"))?;
+        assert_eq!(
+            conn.query_row(
+                "SELECT count(*) FROM failure_events WHERE outcome='recovered'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )?,
+            1
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT count(*) FROM failure_incidents WHERE state='active'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )?,
+            0
+        );
+        assert!(store.current_revision(&Identity::x("10")?)?.is_some());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn failure_reporting_producer_missing_x_configuration_is_a_gap() -> anyhow::Result<()> {
+    for missing_bearer in [false, true] {
+        let root = private_temp()?;
+        let store = Store::open(root.path().join("state"))?;
+        let mut config = Config {
+            state_dir: store.root().into(),
+            ..Config::default()
+        };
+        config.daily.capture.enabled = true;
+        config.limits.max_attempts = 1;
+        if missing_bearer {
+            config.sources.x_enabled = true;
+            config.sources.x_bearer = Some(telegram_archive_bot::config::SecretRef::File(
+                root.path().join("not-configured-token"),
+            ));
+        }
+        store.record_activity(&discovery("101", "10", "private-configuration-gap"))?;
+        telegram_archive_bot::daily_capture::step(
+            &store,
+            &config,
+            &tokio_util::sync::CancellationToken::new(),
+        )
+        .await?;
+        let conn = rusqlite::Connection::open(store.root().join("archive.sqlite"))?;
+        let gaps:i64=conn.query_row("SELECT count(*) FROM failure_incidents WHERE json_extract(metadata,'$.error_class')='pending_configuration' AND actionable=0",[],|r|r.get(0))?;
+        assert_eq!(
+            gaps, 1,
+            "missing provider or explicit bearer is readiness, not an internal defect"
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT count(*) FROM failure_incidents WHERE actionable=1",
+                [],
+                |r| r.get::<_, i64>(0)
+            )?,
+            0
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn failure_reporting_producer_x_graph_preserves_typed_error_evidence() -> anyhow::Result<()> {
+    use futures_util::FutureExt;
+    use telegram_archive_bot::{
+        jobs::Failure,
+        x::{Post, Provider, XGraph},
+    };
+    enum FailedProvider {
+        Typed(Failure),
+        FxCode(u16),
+    }
+    impl Provider for FailedProvider {
+        fn name(&self) -> &'static str {
+            "synthetic-x"
+        }
+        fn fetch<'a>(
+            &'a self,
+            id: &'a str,
+            _: u64,
+            _: &'a tokio_util::sync::CancellationToken,
+        ) -> futures_util::future::BoxFuture<'a, Result<Post, Failure>> {
+            async move {
+                match self {
+                    Self::Typed(failure) => Err(*failure),
+                    Self::FxCode(code) => {
+                        telegram_archive_bot::x::parse_fx(id, &json!({"code":code}))
+                    }
+                }
+            }
+            .boxed()
+        }
+    }
+    struct GraphCollector(XGraph);
+    impl telegram_archive_bot::daily_capture::Collector for GraphCollector {
+        fn collect<'a>(
+            &'a self,
+            store: &'a Store,
+            config: &'a Config,
+            identity: &'a Identity,
+            cancel: &'a tokio_util::sync::CancellationToken,
+        ) -> futures_util::future::BoxFuture<'a, anyhow::Result<Vec<Capture>>> {
+            self.0.capture_one(store, identity, config, cancel).boxed()
+        }
+    }
+    let mut observed = vec![];
+    for provider in [
+        FailedProvider::FxCode(429),
+        FailedProvider::FxCode(503),
+        FailedProvider::Typed(Failure::Network),
+        FailedProvider::FxCode(403),
+        FailedProvider::FxCode(404),
+    ] {
+        let root = private_temp()?;
+        let store = Store::open(root.path().join("state"))?;
+        let mut config = Config {
+            state_dir: store.root().into(),
+            ..Config::default()
+        };
+        config.daily.capture.enabled = true;
+        config.limits.max_attempts = 1;
+        store.record_activity(&discovery("101", "10", "private-x-error"))?;
+        let collector = GraphCollector(XGraph::new(vec![std::sync::Arc::new(provider)]));
+        telegram_archive_bot::daily_capture::step_with(
+            &store,
+            &config,
+            &collector,
+            &tokio_util::sync::CancellationToken::new(),
+        )
+        .await?;
+        let db = rusqlite::Connection::open(store.root().join("archive.sqlite"))?;
+        let (got, active): (String, i64) = db.query_row(
+            "SELECT json_extract(metadata,'$.error_class'),actionable FROM failure_incidents",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let kept:Option<String>=db.query_row("SELECT json_extract(evidence,'$.failure_class') FROM observations WHERE extractor='synthetic-x'",[],|r|r.get(0))?;
+        observed.push(json!([got, active, kept]));
+    }
+    assert_eq!(
+        observed,
+        vec![
+            json!(["rate_limited", 0, "rate_limited"]),
+            json!(["transport", 1, "unavailable"]),
+            json!(["transport", 1, "network"]),
+            json!(["unavailable", 0, null]),
+            json!(["unavailable", 0, null])
+        ],
+        "actual Fx parser and XGraph must distinguish temporary provider errors from expected content gaps"
+    );
+    Ok(())
+}

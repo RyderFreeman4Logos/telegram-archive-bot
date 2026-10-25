@@ -12,6 +12,9 @@ use std::{
 };
 use tokio::time::Instant;
 
+#[path = "notion_pdf_client.rs"]
+mod pdf;
+
 struct Operation<'a> {
     adapter: &'a Adapter,
     cancel: &'a CancellationToken,
@@ -23,6 +26,7 @@ struct Operation<'a> {
     page_id: Option<String>,
     observer: &'a ProgressObserver<'a>,
     written_blocks: usize,
+    work_bytes: u64,
 }
 
 impl<'a> Operation<'a> {
@@ -60,6 +64,7 @@ impl<'a> Operation<'a> {
             page_id: None,
             observer,
             written_blocks: 0,
+            work_bytes: 16_000_000,
         };
         let version = operation.tool(vec!["--version".into()], false).await?;
         if version.trim() != NTN_VERSION {
@@ -123,6 +128,26 @@ impl<'a> Operation<'a> {
     }
 
     fn tool_error(&self, error: ToolError) -> PublicationError {
+        #[cfg(test)]
+        if let Some(root) = self
+            .adapter
+            .config
+            .executable
+            .as_ref()
+            .and_then(|p| p.parent())
+            && root.join("diagnostics-enabled").is_file()
+        {
+            let value =
+                json!({"kind":error.kind,"io_operation":error.io_operation,"report":error.report});
+            if let Ok(mut out) = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .mode(0o600)
+                .open(root.join("tool-errors.jsonl"))
+            {
+                let _ = writeln!(out, "{value}");
+            }
+        }
         if let Some(report) = error.report {
             for text in [&report.stdout, &report.stderr] {
                 if let Ok(value) = serde_json::from_str(text)
@@ -191,7 +216,7 @@ impl<'a> Operation<'a> {
             timeout: remaining.min(Duration::from_secs(self.adapter.config.request_seconds)),
             log_bytes: 16384,
             stdout_bytes: Some(self.adapter.config.response_bytes),
-            work_bytes: 16_000_000,
+            work_bytes: self.work_bytes,
             secrets: vec![self.token.clone()],
         }
         .run(self.cancel)

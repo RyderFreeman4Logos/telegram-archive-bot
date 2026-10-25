@@ -600,6 +600,21 @@ impl Store {
                 now.saturating_add(lease.config.limits.lease_seconds as i64)
             ],
         )?;
+        // Only an actual collector's fully covered terminal page establishes recovery.
+        crate::failure_reporting::timeline_settled(
+            &tx,
+            lease,
+            evidence,
+            None,
+            evidence["coverage_complete"] == true,
+            &format!(
+                "{}:{}:page:{}",
+                lease.window.attempts,
+                lease.window.generation,
+                pages + 1
+            ),
+            now,
+        )?;
         tx.commit()?;
         Ok(())
     }
@@ -708,6 +723,7 @@ impl Store {
             "daily evidence exceeds limit"
         );
         let mut state = progress.state;
+        let report_reason = progress.reason.clone();
         let mut reason = progress.reason;
         if state == DayState::Complete {
             ensure!(
@@ -741,6 +757,18 @@ impl Store {
         }
         tx.execute("UPDATE daily_attempts SET state=?3,finished_at=?4,cursor=?5,evidence=?6 WHERE window_id=?1 AND attempt=?2",params![lease.window.plan.id,lease.window.attempts,state.as_str(),now,progress.cursor,evidence])?;
         tx.execute("UPDATE daily_windows SET state=?2,cursor=?3,reason=?4,lease_until=NULL,failures=CASE WHEN ?5 THEN failures+1 ELSE 0 END,next_attempt_at=?6 WHERE id=?1",params![lease.window.plan.id,state.as_str(),progress.cursor,reason,failed,now.saturating_add(lease.config.daily.interval_seconds.max(retry_after_seconds.unwrap_or(0).min(86400)) as i64)])?;
+        crate::failure_reporting::timeline_settled(
+            &tx,
+            lease,
+            &progress.evidence,
+            report_reason.as_deref(),
+            progress.state == DayState::Complete && progress.coverage_complete,
+            &format!(
+                "{}:{}:finish",
+                lease.window.attempts, lease.window.generation
+            ),
+            now,
+        )?;
         tx.commit()?;
         Ok(())
     }

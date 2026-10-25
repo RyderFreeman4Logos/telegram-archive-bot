@@ -327,6 +327,9 @@ pub fn parse_fx(id: &str, payload: &Value) -> Result<Post, Failure> {
             "provider_not_found",
         ));
     }
+    if code == 429 {
+        return Err(Failure::RateLimited);
+    }
     if code >= 500 {
         return Err(Failure::Unavailable);
     }
@@ -717,7 +720,11 @@ impl XGraph {
             {
                 Ok(post) => post,
                 Err(Failure::Cancelled) => return Err(Failure::Cancelled),
-                Err(error) => Post::unavailable(id, FetchStatus::Error, &error.to_string()),
+                Err(error) => {
+                    let mut post = Post::unavailable(id, FetchStatus::Error, &error.to_string());
+                    post.evidence["failure_class"] = json!(error);
+                    post
+                }
             };
             if post.id != id {
                 return Err(Failure::InvalidOutput);

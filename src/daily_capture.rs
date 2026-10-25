@@ -139,7 +139,8 @@ impl Collector for ConfiguredCollector {
     ) -> futures_util::future::BoxFuture<'a, Result<Vec<Capture>>> {
         async move {
             if source.provider == "x" {
-                crate::x::XGraph::configured_daily(config)?
+                crate::x::XGraph::configured_daily(config)
+                    .map_err(|_| crate::jobs::Failure::ToolMissing)?
                     .capture_one(store, source, config, cancel)
                     .await
             } else {
@@ -472,7 +473,12 @@ fn build_view(lease: &Lease) -> Result<View> {
         ),
     })
 }
-fn finish(store: &Store, lease: &Lease, error: Option<&str>) -> Result<()> {
+fn finish(
+    store: &Store,
+    lease: &Lease,
+    failure: Option<(&str, crate::failure_reporting::ErrorClass)>,
+) -> Result<()> {
+    let error = failure.map(|(reason, _)| reason);
     // Freeze the view from this attempt's pinned observations before writing its terminal receipt.
     let prepared_view = if error.is_none() || lease.attempts >= lease.config.limits.max_attempts {
         Some(build_view(lease)?)
@@ -510,6 +516,34 @@ fn finish(store: &Store, lease: &Lease, error: Option<&str>) -> Result<()> {
         "UPDATE daily_capture_lease SET source_id=NULL,lease_until=0 WHERE singleton=1",
         [],
     )?;
+    if !lease.exhausted {
+        use crate::failure_reporting::{ErrorClass, Producer, Subsystem};
+        let class = failure.map(|(_, class)| class).or_else(|| {
+            (!lease.progress.omissions.is_empty()
+                || lease.progress.retained.is_empty()
+                || lease
+                    .progress
+                    .retained
+                    .iter()
+                    .any(|r| r.revision_id.is_none()))
+            .then_some(ErrorClass::Unavailable)
+        });
+        Producer {
+            subsystem: Subsystem::Capture,
+            provider: &lease.source.provider,
+            operation: "original_capture",
+            schema: "daily-capture-v1",
+            stream: &format!("capture:{}", lease.source.id()),
+            source: &lease.source.id(),
+            window: None,
+        }
+        .settle(
+            &tx,
+            &format!("{}:{}", lease.cycle, lease.attempts),
+            now(),
+            class,
+        )?;
+    }
     tx.commit()?;
     Ok(())
 }
@@ -598,10 +632,18 @@ async fn traverse(
             }
             retain_node(store, lease, &node.identity, &captures)?
         };
-        ensure!(
-            captures.iter().any(|(_, c)| c.status != FetchStatus::Error),
-            "capture provider failure"
-        );
+        if captures.iter().all(|(_, c)| c.status == FetchStatus::Error) {
+            let failure = captures
+                .iter()
+                .find_map(|(_, c)| {
+                    serde_json::from_value::<crate::jobs::Failure>(
+                        c.evidence["failure_class"].clone(),
+                    )
+                    .ok()
+                })
+                .unwrap_or(crate::jobs::Failure::InvalidOutput);
+            return Err(failure.into());
+        }
         let revision_id = store.current_revision(&node.identity)?;
         let revision = revision_id
             .as_ref()
@@ -819,7 +861,14 @@ pub async fn step_with(
         return Ok(report);
     };
     if lease.exhausted {
-        finish(store, &lease, Some("capture_attempt_budget_exhausted"))?;
+        finish(
+            store,
+            &lease,
+            Some((
+                "capture_attempt_budget_exhausted",
+                crate::failure_reporting::ErrorClass::Unavailable,
+            )),
+        )?;
         report.captured = true;
         return Ok(report);
     }
@@ -829,11 +878,19 @@ pub async fn step_with(
         traverse(store, &mut lease, collector, &child),
     )
     .await;
+    use crate::failure_reporting::ErrorClass;
     let category = match result {
         Ok(Ok(())) => None,
-        Ok(Err(_)) if cancel.is_cancelled() => Some("capture_cancelled"),
-        Ok(Err(_)) => Some("capture_fetch_failed"),
-        Err(_) => Some("capture_time_limit"),
+        Ok(Err(_)) if cancel.is_cancelled() => Some(("capture_cancelled", ErrorClass::Cancelled)),
+        Ok(Err(error)) => Some((
+            "capture_fetch_failed",
+            error
+                .downcast_ref::<crate::jobs::Failure>()
+                .copied()
+                .map(ErrorClass::from_job)
+                .unwrap_or(ErrorClass::Internal),
+        )),
+        Err(_) => Some(("capture_time_limit", ErrorClass::Transport)),
     };
     child.cancel();
     finish(store, &lease, category).context("capture terminal receipt")?;

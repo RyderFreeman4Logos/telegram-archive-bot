@@ -44,11 +44,27 @@ pub async fn tick(
     config: &Config,
     cancel: &CancellationToken,
 ) -> anyhow::Result<bool> {
+    tick_with_http(
+        store,
+        config,
+        cancel,
+        &crate::network::PublicHttp::default(),
+    )
+    .await
+}
+
+pub(crate) async fn tick_with_http(
+    store: &Store,
+    config: &Config,
+    cancel: &CancellationToken,
+    http: &crate::network::PublicHttp,
+) -> anyhow::Result<bool> {
     let Some(_guard) = store.notion_lock()? else {
         return Ok(false);
     };
     let destination = store.notion_configure(&config.notion)?;
     store.notion_bootstrap(64)?;
+    store.notion_pdf_bootstrap(64)?;
     if cancel.is_cancelled()
         || store.recovery_paused()?
         || readiness(&config.notion).state != ReadinessState::Ready
@@ -61,6 +77,13 @@ pub async fn tick(
     let Some(mut intent) = store.notion_next(&destination, &config.notion)? else {
         return Ok(false);
     };
+    if intent.kind == "pdf_attachment" {
+        #[cfg(feature = "ntn")]
+        crate::notion_pdf::tick(store, config, &mut intent, cancel, http).await?;
+        #[cfg(not(feature = "ntn"))]
+        let _ = http;
+        return Ok(true);
+    }
     let record = match store.notion_record(&intent, config.notion.record_bytes) {
         Ok(record) if record.plan(&config.notion).is_ok() => record,
         _ => {

@@ -55,6 +55,7 @@ pub struct Config {
     pub sources: Sources,
     pub daily: Daily,
     pub notion: Notion,
+    pub failure_reporting: FailureReporting,
 }
 
 impl Default for Config {
@@ -77,6 +78,7 @@ impl Default for Config {
             sources: Sources::default(),
             daily: Daily::default(),
             notion: Notion::default(),
+            failure_reporting: FailureReporting::default(),
         }
     }
 }
@@ -394,6 +396,7 @@ impl Config {
         ensure!(self.schema_version == 1, "unsupported configuration schema");
         ensure!(self.state_dir.is_absolute(), "state_dir must be absolute");
         self.notion.validate()?;
+        self.failure_reporting.validate()?;
         ensure!(
             !(self.synthesis.local && !self.synthesis.speakers.is_empty()),
             "local TTS cannot use multiple speakers"
@@ -851,6 +854,7 @@ impl Notion {
 pub struct ConfigManager {
     current: Arc<Config>,
     notion_changed: tokio_util::sync::CancellationToken,
+    reporting_changed: tokio_util::sync::CancellationToken,
 }
 impl ConfigManager {
     pub fn new(config: Config) -> Result<Self> {
@@ -858,6 +862,7 @@ impl ConfigManager {
         Ok(Self {
             current: Arc::new(config),
             notion_changed: tokio_util::sync::CancellationToken::new(),
+            reporting_changed: tokio_util::sync::CancellationToken::new(),
         })
     }
     pub fn snapshot(&self) -> Arc<Config> {
@@ -865,6 +870,9 @@ impl ConfigManager {
     }
     pub(crate) fn notion_snapshot(&self) -> (Arc<Config>, tokio_util::sync::CancellationToken) {
         (self.current.clone(), self.notion_changed.clone())
+    }
+    pub(crate) fn reporting_snapshot(&self) -> (Arc<Config>, tokio_util::sync::CancellationToken) {
+        (self.current.clone(), self.reporting_changed.clone())
     }
     pub fn reload(&mut self, path: &Path) -> Result<()> {
         let next = Config::load(path)?;
@@ -878,11 +886,85 @@ impl ConfigManager {
             "state_dir and bot_id changes require restart"
         );
         next.check_secrets()?;
+        if serde_json::to_value(&next.failure_reporting)?
+            != serde_json::to_value(&self.current.failure_reporting)?
+        {
+            self.reporting_changed.cancel();
+            self.reporting_changed = tokio_util::sync::CancellationToken::new();
+        }
         if serde_json::to_value(&next.notion)? != serde_json::to_value(&self.current.notion)? {
             self.notion_changed.cancel();
             self.notion_changed = tokio_util::sync::CancellationToken::new();
         }
         self.current = Arc::new(next);
+        Ok(())
+    }
+}
+
+/// DA08 / #75. No cwd repository inference or ambient gh authentication.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FailureReporting {
+    pub enabled: bool,
+    pub repository: String,
+    pub executable: Option<PathBuf>,
+    pub token: Option<SecretRef>,
+    pub threshold: u32,
+    pub debounce_seconds: u64,
+    pub update_seconds: u64,
+    pub retry_seconds: u64,
+    pub timeout_seconds: u64,
+    pub labels: Vec<String>,
+}
+impl Default for FailureReporting {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            repository: "RyderFreeman4Logos/telegram-archive-bot".into(),
+            executable: None,
+            token: None,
+            threshold: 3,
+            debounce_seconds: 300,
+            update_seconds: 3600,
+            retry_seconds: 60,
+            timeout_seconds: 30,
+            labels: Vec::new(),
+        }
+    }
+}
+impl FailureReporting {
+    pub fn validate(&self) -> Result<()> {
+        let parts: Vec<_> = self.repository.split('/').collect();
+        ensure!(
+            parts.len() == 2
+                && parts.iter().all(|p| !p.is_empty()
+                    && p.len() <= 100
+                    && *p != "."
+                    && *p != ".."
+                    && p.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))),
+            "report repository must be an explicit GitHub owner/repository"
+        );
+        ensure!(
+            self.executable.as_ref().is_none_or(|p| p.is_absolute()),
+            "gh executable must be absolute"
+        );
+        ensure!(
+            (1..=10000).contains(&self.threshold)
+                && self.debounce_seconds <= 604800
+                && (1..=604800).contains(&self.update_seconds)
+                && (1..=86400).contains(&self.retry_seconds)
+                && (1..=120).contains(&self.timeout_seconds),
+            "invalid reporting bounds"
+        );
+        ensure!(
+            self.labels.len() <= 10
+                && self.labels.iter().all(|s| !s.is_empty()
+                    && s.len() <= 50
+                    && s.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"-_: .".contains(&b))),
+            "invalid reporting labels"
+        );
         Ok(())
     }
 }

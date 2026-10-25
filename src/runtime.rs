@@ -742,6 +742,11 @@ pub async fn serve(path: PathBuf, shutdown: CancellationToken) -> Result<()> {
     let syntheses = Arc::new(Semaphore::new(limits.syntheses));
     let finalizers = Arc::new(Semaphore::new(limits.finalizers));
     let mut workers = JoinSet::new();
+    workers.spawn(crate::failure_report_worker::serve(
+        store.clone(),
+        config.clone(),
+        shutdown.clone(),
+    ));
     workers.spawn(crate::notion_worker::serve(
         store.clone(),
         config.clone(),

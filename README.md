@@ -58,6 +58,9 @@ systemd deployment. `run` starts a live Telegram poller when Telegram is enabled
 build, installation and replay do not activate it. The opt-in
 [daily account/day planner](docs/daily-planner.md) also runs with Telegram and
 models disabled; timeline collection remains a separate DA03 adapter.
+The independent [automatic failure reporter](docs/failure-reporting.md) retains
+private diagnostics and uses explicitly configured `gh` credentials to aggregate
+persistent actionable defects in the authorized repository (DA08 / #75).
 [Daily original-content capture](docs/daily-content-capture.md) hydrates persisted
 activities autonomously, retaining bounded context and external documents without
 creating model or delivery jobs.

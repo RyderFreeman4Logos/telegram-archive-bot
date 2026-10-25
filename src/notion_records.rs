@@ -142,6 +142,41 @@ impl Store {
                         &json!({"schema_version":1,"source_id":source,"source_observation_id":id,"revision_id":revision,"revision_metadata":metadata,"observed_at":time,"evidence":serde_json::from_str::<Value>(&evidence)?,"relations":relations}),
                     )?;
                 }
+                if intent.kind == "observation"
+                    && let Some(pdf) = crate::notion_pdf::original(&conn, id)?
+                {
+                    for url in &pdf.landing_urls {
+                        if !record.original_urls.contains(url) {
+                            record.original_urls.push(url.clone());
+                        }
+                    }
+                    let text = if let Some(revision) = &pdf.revision_id {
+                        let bytes: i64 = conn.query_row(
+                            "SELECT length(CAST(body AS BLOB)) FROM source_revisions WHERE id=?1",
+                            [revision],
+                            |r| r.get(0),
+                        )?;
+                        ensure!(
+                            bytes >= 0 && bytes as usize <= max_bytes,
+                            "PDF extracted text exceeds bound"
+                        );
+                        conn.query_row(
+                            "SELECT body FROM source_revisions WHERE id=?1",
+                            [revision],
+                            |r| r.get::<_, String>(0),
+                        )?
+                    } else {
+                        String::new()
+                    };
+                    record.content = format!(
+                        "{}\n\nPDF original record (da07-pdf-v1)\n{}\n\nExtracted original text:\n{}",
+                        record.content,
+                        serde_json::to_string_pretty(
+                            &json!({"original":pdf,"binary_availability":"Not attached unless the separate DA07 availability block on this page verifies it; upload and reader file access are best-effort","external_origin_access_guaranteed":false})
+                        )?,
+                        text
+                    );
+                }
             }
             "account" => {
                 let value: String = conn.query_row(
