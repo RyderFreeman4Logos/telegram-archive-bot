@@ -299,6 +299,24 @@ impl Store {
         for event in &events {
             let id = &event.entity;
             match event.kind.as_str() {
+                "activity_observation" => {
+                    let manifest: String = tx.query_row(
+                        "SELECT manifest FROM activity_observations WHERE id=?1",
+                        [id],
+                        |r| r.get(0),
+                    )?;
+                    let observation: crate::activities::ActivityObservation =
+                        serde_json::from_str(&manifest)?;
+                    ensure!(
+                        observation.id == *id,
+                        "activity observation identity mismatch"
+                    );
+                    insert_json(
+                        &mut files,
+                        format!("{PREFIX}/activity-observations/{id}.json"),
+                        &observation,
+                    )?;
+                }
                 "revision" => revision(&tx, &mut files, id)?,
                 "alias" => {
                     let alias: Vec<String> = serde_json::from_str(id)?;

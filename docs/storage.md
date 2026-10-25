@@ -65,3 +65,63 @@ omissions. Missing nodes remain explicit; hydration creates a new view. The
 manifest describes the revisions actually archived, without claiming which
 revision a historical author saw. Revision/observation/view changes also create
 projection events in the same short transaction.
+
+## Account activities (DA01 / #68)
+
+Schema 13 adds accounts, account observations, discovery runs, activities and
+activity observations. It adds no source body store and changes no existing
+source, revision or view rows. `Store::record_activity` captures a source using
+the existing content hash, then pins its current archived revision and context
+view in the same SQLite writer transaction. Account aliases, counters, retrieval
+times and discovery paths remain outside that content hash. An activity records
+an `original`, `quote`, `reply` or `repost` relation to its source. A quote/reply
+source's context continues to use the existing typed source edges. Multiple
+repost actors reference one original source rather than copying its body.
+
+`AccountIdentity::ProviderId` uses the provider and user ID. Observed handles and
+display names are immutable history associated with that identity; a rename
+does not create another account. When the provider does not establish a user ID,
+the caller supplies an explicit `Unresolved` key. A matching handle is never
+proof for merging uncertain accounts with each other or with a known user ID.
+
+An activity's provider event ID is its stable identity when supplied. The actor,
+kind and source assertions cannot change under that identity. Without a provider
+event ID, the fallback is scoped to the actor, source, discovery run and its
+caller-supplied occurrence key. Distinct occurrences, including repeated reposts by the same
+actor of the same source, must have distinct keys. The fallback deliberately
+claims no cross-run identity. An adapter must not manufacture a provider event
+ID from the original post ID or from actor/target equality.
+
+Discovery runs have stable provider/key identities and immutable provenance.
+Each retrieval supplies an `observation_key`, stable for identical retries. A
+new fetch, discovery path, rename or hydration supplies a new observation key;
+reuse with a different payload is refused rather than replacing prior evidence.
+Concurrent identical workers converge to the same activity observation and
+source revision. Separate page observations may retain distinct discovery
+evidence while sharing the same provider activity ID and source revision.
+
+Activity time and original publication time are independent `TimeEvidence`
+values. An instant or inclusive interval retains UTC seconds/nanoseconds,
+reported precision and provider provenance (which can retain the original time
+string/timezone). Unknown time remains explicit. Neither is substituted for the
+other. Local retrieval time is separately recorded as UTC epoch seconds. This
+lets a recent repost refer to an old original without shifting either timestamp.
+
+Each activity observation retains its source observation ID, fetch status, view
+ID, exact archived root revision or explicit missing reason. A missing target
+can later be hydrated, and an edit can create another revision, without changing
+earlier activity observations or views. A failed/deleted fetch can still pin an
+earlier complete archived revision; its fetch status continues to record that
+the fresh fetch failed. No claim is made about the historical revision seen by
+the actor. `activity`, `activity_observation(s)`, `account_activities` and
+`account_history` expose persisted records without starting a provider or job.
+
+Full backups preserve these tables. Semantic Git exports include immutable
+`archive-v1/activity-observations/<id>.json` manifests with account/run evidence
+and references to the existing source observations and pinned views. Git-only
+restore validates those identities and references after importing the canonical
+sources/views. Recovery holds still block projection and other external side
+effects. Synthetic tests cover ordering, retry/concurrency convergence, aliases,
+unknown identities/times, edits, hydration, schema 12 upgrade, full backup and
+Git semantic restore/re-export. Discovery, period selection and briefing jobs
+are separate work; this persistence API does not schedule or contact providers.

@@ -244,7 +244,9 @@ fn schema_eleven_upgrade_indexes_source_lookups_without_changing_results() -> Re
     drop(store);
     let database = dir.path().join("archive.sqlite");
     let conn = rusqlite::Connection::open(&database)?;
-    conn.execute_batch("DROP INDEX IF EXISTS observations_source; PRAGMA user_version=11;")?;
+    // Construct the old schema too, rather than only lowering the version on a
+    // current schema (which would try to recreate later migrations' tables).
+    conn.execute_batch("DROP TABLE activity_observations; DROP TABLE activities; DROP TABLE discovery_runs; DROP TABLE account_observations; DROP TABLE accounts; DROP INDEX IF EXISTS observations_source; PRAGMA user_version=11;")?;
     let queries = [
         "SELECT status FROM observations WHERE source_id=?1 ORDER BY id DESC LIMIT 1",
         "SELECT revision_id FROM observations WHERE source_id=?1 AND revision_id IS NOT NULL ORDER BY CASE status WHEN 'complete' THEN 0 ELSE 1 END,id DESC LIMIT 1",
