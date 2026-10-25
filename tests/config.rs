@@ -1,6 +1,45 @@
 use telegram_archive_bot::config::{Config, ConfigManager, SecretRef};
 
 #[test]
+fn notion_defaults_enabled_without_resolving_auth() {
+    let config: Config = toml::from_str("").unwrap();
+    config.validate().unwrap();
+    config.check_secrets().unwrap();
+    let snapshot = serde_json::to_value(config).unwrap();
+    assert_eq!(snapshot["notion"]["enabled"], true);
+    assert!(snapshot["notion"]["token"].is_null());
+    assert!(snapshot["notion"]["destination"].is_null());
+}
+
+#[test]
+fn notion_bounds_are_typed_and_missing_credentials_stay_nonfatal() {
+    let config: Config = toml::from_str(
+        "[notion]\nenabled = true\n[notion.token]\nkind = 'file'\nname = '/missing/notion-token'\n",
+    )
+    .unwrap();
+    config.validate().unwrap();
+    config.check_secrets().unwrap(); // local intake is independent from Notion availability
+    for field in [
+        "request_seconds",
+        "operation_seconds",
+        "payload_bytes",
+        "response_bytes",
+        "record_bytes",
+        "max_blocks",
+        "max_requests",
+        "max_attempts",
+        "retry_seconds",
+    ] {
+        let text = format!("[notion]\n{field} = 0\n");
+        assert!(
+            toml::from_str::<Config>(&text).unwrap().validate().is_err(),
+            "{field}"
+        );
+    }
+    assert!(toml::from_str::<Config>("[notion]\ninvented_secret = 'no'\n").is_err());
+}
+
+#[test]
 fn semantic_file_limit_defaults_and_requires_a_positive_count() {
     let default: Config = toml::from_str("[limits]\ninput_bytes = 10000000").unwrap();
     assert_eq!(default.limits.semantic_files, 100_000);
