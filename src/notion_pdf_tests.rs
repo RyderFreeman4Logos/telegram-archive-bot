@@ -163,6 +163,22 @@ impl Fixture {
             serde_json::to_string(&self.store.notion_list(100)?)?
         )
     }
+    async fn operator(&self, action: impl Fn() -> Result<()>) -> Result<()> {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match action() {
+                Err(error)
+                    if error.to_string()
+                        == "Notion worker is busy; try again after the current operation"
+                        && tokio::time::Instant::now() < deadline =>
+                {
+                    // Busy admission has no effects; every other outcome returns unchanged.
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                result => return result,
+            }
+        }
+    }
     fn mode(&self, mode: &str) {
         std::fs::write(self.root.path().join("mode"), mode).unwrap();
     }
@@ -335,8 +351,19 @@ async fn completed_proof_is_revoked_on_missing_file_and_operator_reconcile_is_re
         .lines()
         .count();
     f.mode("missing_attachment");
-    f.store
-        .reconcile_notion(status["queue_id"].as_str().unwrap(), None)?;
+    let guard = f.store.notion_lock()?.expect("uncontended control");
+    let release = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        drop(guard);
+    });
+    let reconciled = f
+        .operator(|| {
+            f.store
+                .reconcile_notion(status["queue_id"].as_str().unwrap(), None)
+        })
+        .await;
+    release.await?;
+    reconciled?;
     f.drain(2).await?;
     assert_ne!(f.status()["attachment"], "verified");
     assert!(f.status()["verified_sha256"].is_null());
@@ -432,8 +459,16 @@ async fn failed_binary_does_not_block_other_records_or_explicit_manifest_gap() -
         content: "Readable day record; original PDF text remains independently readable.".into(),
     };
     let key = f.store.record_notion_document(&record)?;
-    for _ in 0..10 {
-        f.tick().await?;
+    let mut remaining = 10;
+    let mut idle = std::time::Duration::ZERO;
+    while remaining > 0 && idle < std::time::Duration::from_secs(2) {
+        let started = std::time::Instant::now();
+        if f.tick().await? {
+            remaining -= 1;
+        } else {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            idle += started.elapsed();
+        }
         if f.store
             .notion_list(100)?
             .iter()
@@ -488,15 +523,21 @@ async fn auth_gap_can_resume_explicitly_but_unknown_append_cannot_be_retried() -
     assert_ne!(f.status()["attachment"], "verified");
     let key = f.status()["queue_id"].as_str().unwrap().to_owned();
     f.mode("normal");
-    f.store.retry_notion(&key)?;
+    f.operator(|| f.store.retry_notion(&key)).await?;
     f.drain(8).await?;
     assert_eq!(f.status()["attachment"], "verified");
     let f = Fixture::new("append_lost_hidden").await?;
     f.drain(8).await?;
-    assert!(
-        f.store
-            .retry_notion(f.status()["queue_id"].as_str().unwrap())
-            .is_err()
+    let error = f
+        .operator(|| {
+            f.store
+                .retry_notion(f.status()["queue_id"].as_str().unwrap())
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "only a known no-effect intent can be retried; uncertain writes require reconciliation"
     );
     assert_eq!(f.remote()["pdf_appends"], 1);
     Ok(())
