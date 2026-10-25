@@ -63,3 +63,31 @@ push = false
 
 [limits]
 semantic_files = 100000 # Git-only restore; raise explicitly for a measured larger archive.
+
+# DA02: opt-in scheduling only; timeline collection is a separate DA03 adapter.
+[daily]
+enabled = false
+timezone = "America/Los_Angeles"
+interval_seconds = 300
+first_run_lookback_days = 7
+reconciliation_days = 2
+max_accounts = 100
+max_days_per_request = 366
+max_backfill_windows = 1000
+max_windows_per_tick = 100
+max_attempts = 3
+# Keep key unchanged when renaming a handle. No watched accounts by default.
+# [[daily.accounts]]
+# key = "example-account"
+# provider = "x"
+# handle = "example"
+# label = "Example"
+# enabled = true
+
+[daily.provider]
+kind = "disabled"
+max_pages = 20
+page_size = 40
+# Future DA03 x_web_session settings require secret references, never values:
+# cookie = { kind = "file", name = "/private/x-session-cookie" }
+# bearer = { kind = "file", name = "/private/x-public-web-bearer" }

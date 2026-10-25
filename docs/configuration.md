@@ -27,6 +27,13 @@ for new jobs. Existing jobs retain their serialized snapshot. State-directory
 and bot-identity changes require a restart; a rejected reload retains the prior
 configuration. Secret rotation occurs through the existing secret reference.
 
+The opt-in [`daily` watchlist and local-date planner](daily-planner.md) defaults
+to disabled and `America/Los_Angeles`. It has bounded backfill, automatic catch-up,
+durable attempt/cursor snapshots and independent provider settings. Watch keys
+remain stable across handle changes. Conflicting established identities reject
+a reload. This planner leaf does not install a timeline provider or validate a
+web session; planning/status never read its cookie/bearer references.
+
 The job supervisor owns retries: three attempts per phase, 1,700 seconds per LLM
 attempt, six hours total execution including retry backoff. Queue time precedes
 the absolute execution deadline. Other defaults are 300 seconds for downloads,

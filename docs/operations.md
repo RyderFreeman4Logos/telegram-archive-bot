@@ -130,7 +130,10 @@ non-secret effective settings and queue/projection metrics. A successful doctor
 is not provider authentication, remote model-weight attestation or client playback
 acceptance. Keep a separate capability report and opt-in live evidence.
 
-`run` explicitly starts a real poller. Before switching an existing bot, compare
+`run` starts a real poller when `telegram.enabled` is true. With only
+`daily.enabled`, it runs the [bounded daily planner](daily-planner.md) without
+Telegram polling or delivery; this planner leaf reports the unavailable timeline
+provider explicitly. Before switching an existing bot, compare
 an isolated offline replay, stop the old poller yourself, take a verified full
 backup, and record the cursor. Only one installation may poll a bot. The local
 service lock prevents duplicate instances using the same state directory; it
@@ -171,6 +174,11 @@ previous configuration active. X provider caches are cleared after successful
 reload. Concurrency is conservative: one worker per phase plus a dedicated control
 worker, with shared bounds for downloads, model requests, synthesis and FFmpeg.
 Delivery uses one worker, never exceeding the configured delivery maximum.
+
+Daily watchlist additions, disables and handle renames can reload. Established
+watch-key identity changes are refused. New plans/attempts use the replacement
+snapshot while in-flight attempts and historical day manifests retain theirs.
+The daily planner checks reloads within one second and honors recovery holds.
 
 For cross-job narration reuse, pin md2audio and its backend/local weights and set
 `synthesis.deployment_revision`. Update it when that deployment changes; a Python

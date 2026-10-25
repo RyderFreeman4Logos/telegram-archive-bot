@@ -17,12 +17,19 @@ Selected integration baselines, checked against public upstream on 2026-10-23 UT
 | dom_smoothie / htmd / encoding_rs | 0.18.2 / 0.5.6 / 0.8.42 | Rust extraction libraries / MIT / Apache-2.0 / MIT OR Apache-2.0 |
 | Git | operator-provided | External GPL executable |
 | Bubblewrap | operator-provided; local fixture 0.8.0 | External LGPL-2.0-or-later executable; required Linux namespace boundary |
+| chrono / chrono-tz | 0.4.45 / 0.10.4 | Rust civil-time/IANA data / MIT OR Apache-2.0; timezone data public domain |
+
+DA02 reuses the already locked chrono version and adds chrono-tz with phf and
+phf_shared 0.12.1 (MIT). The [chrono-tz timezone API](https://docs.rs/chrono-tz/0.10.4/chrono_tz/enum.Tz.html)
+and [chrono local date API](https://docs.rs/chrono/0.4.45/chrono/struct.NaiveDate.html)
+provide explicit local-midnight resolution; no custom TZ parser or global
+process-timezone changes are used.
 
 These tools are not bundled or relicensed. Installation must retain each tool's
 license and satisfy its distribution requirements. Provider terms and media
 rights remain operator responsibilities. Tool versions are recorded by doctor.
 Both locked dependency graphs are recorded in the [resolved inventory](verification/dependency-licenses.json)
-(452 unique packages, including target-specific and development dependencies).
+(455 unique packages, including target-specific and development dependencies).
 [Third-party notices](verification/third-party-notices.txt) retain packaged and
 pinned-upstream license texts, grouped by identical bytes. Where a crate declares
 an Apache-2.0 alternative without a standalone license file, that alternative and

@@ -332,7 +332,10 @@ async fn da01_full_and_semantic_backup_restore_preserve_activity_history_and_hol
     let backup = dir.path().join("backup");
     let manifest = store.backup(&backup)?;
     assert_eq!(manifest.schema_version, 1);
-    assert_eq!(manifest.database_schema, 13);
+    assert_eq!(
+        manifest.database_schema,
+        telegram_archive_bot::storage::SCHEMA_VERSION
+    );
     Store::verify_backup(&backup)?;
     let full = dir.path().join("full-restored");
     assert!(Store::restore_backup(&backup, &full)?.external_side_effects_paused);
@@ -577,7 +580,7 @@ fn da01_schema_upgrade_preserves_sources_views() -> Result<()> {
     let conn = rusqlite::Connection::open(dir.path().join("archive.sqlite"))?;
     assert_eq!(
         conn.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))?,
-        13
+        telegram_archive_bot::storage::SCHEMA_VERSION
     );
     assert_eq!(store.revision(&revision)?.content, content);
     assert_eq!(store.view(&view.id()?)?, view);

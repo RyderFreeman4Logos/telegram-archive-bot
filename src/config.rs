@@ -53,6 +53,7 @@ pub struct Config {
     pub limits: Limits,
     pub archive: Archive,
     pub sources: Sources,
+    pub daily: Daily,
     pub notion: Notion,
 }
 
@@ -74,6 +75,7 @@ impl Default for Config {
             limits: Limits::default(),
             archive: Archive::default(),
             sources: Sources::default(),
+            daily: Daily::default(),
             notion: Notion::default(),
         }
     }
@@ -388,6 +390,7 @@ impl Config {
         Ok(config)
     }
     pub fn validate(&self) -> Result<()> {
+        self.daily.validate()?;
         ensure!(self.schema_version == 1, "unsupported configuration schema");
         ensure!(self.state_dir.is_absolute(), "state_dir must be absolute");
         self.notion.validate()?;
@@ -617,6 +620,174 @@ impl Config {
     }
     pub fn fingerprint(&self) -> Result<String> {
         Ok(crate::digest(serde_json::to_vec(self)?))
+    }
+}
+
+/// DA02 / #69: opt-in scheduling; no collection provider is installed by DA02.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Daily {
+    pub enabled: bool,
+    pub timezone: String,
+    pub interval_seconds: u64,
+    pub first_run_lookback_days: u32,
+    pub reconciliation_days: u32,
+    pub max_accounts: usize,
+    pub max_days_per_request: u32,
+    pub max_backfill_windows: usize,
+    pub max_windows_per_tick: usize,
+    pub max_attempts: u32,
+    pub accounts: Vec<WatchAccount>,
+    pub provider: DailyProvider,
+}
+impl Default for Daily {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            timezone: "America/Los_Angeles".into(),
+            interval_seconds: 300,
+            first_run_lookback_days: 7,
+            reconciliation_days: 2,
+            max_accounts: 100,
+            max_days_per_request: 366,
+            max_backfill_windows: 1000,
+            max_windows_per_tick: 100,
+            max_attempts: 3,
+            accounts: vec![],
+            provider: DailyProvider::default(),
+        }
+    }
+}
+impl Daily {
+    fn validate(&self) -> Result<()> {
+        self.timezone
+            .parse::<chrono_tz::Tz>()
+            .map_err(|_| anyhow::anyhow!("daily timezone must be an IANA name"))?;
+        ensure!(
+            (1..=86400).contains(&self.interval_seconds)
+                && (1..=1000).contains(&self.max_accounts)
+                && self.accounts.len() <= self.max_accounts
+                && (1..=3660).contains(&self.max_days_per_request)
+                && (1..=self.max_days_per_request).contains(&self.first_run_lookback_days)
+                && self.reconciliation_days <= self.max_days_per_request
+                && (1..=10000).contains(&self.max_backfill_windows)
+                && (1..=1000).contains(&self.max_windows_per_tick)
+                && (1..=100).contains(&self.max_attempts),
+            "invalid daily planning limits"
+        );
+        ensure!(
+            (1..=1000).contains(&self.provider.max_pages)
+                && (1..=100).contains(&self.provider.page_size),
+            "invalid daily provider page limits"
+        );
+        if self.provider.kind == DailyProviderKind::XWebSession {
+            ensure!(
+                self.provider.cookie.is_some() && self.provider.bearer.is_some(),
+                "X web sessions require cookie and bearer secret references"
+            );
+        }
+        let mut keys = std::collections::BTreeSet::new();
+        let mut ids = std::collections::BTreeSet::new();
+        for account in &self.accounts {
+            ensure!(
+                !account.key.is_empty()
+                    && account.key.len() <= 128
+                    && account
+                        .key
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+                    && keys.insert(&account.key),
+                "invalid or duplicate daily watch key"
+            );
+            ensure!(
+                account.provider == "x",
+                "unsupported daily account provider"
+            );
+            ensure!(
+                account.user_id.is_some() || account.handle.is_some(),
+                "daily account requires user_id or handle"
+            );
+            if let Some(id) = &account.user_id {
+                ensure!(
+                    !id.is_empty()
+                        && id.len() <= 30
+                        && id.bytes().all(|b| b.is_ascii_digit())
+                        && ids.insert((&account.provider, id)),
+                    "invalid or duplicate daily user ID"
+                );
+            }
+            if let Some(handle) = &account.handle {
+                ensure!(
+                    !handle.is_empty()
+                        && handle.len() <= 15
+                        && handle
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'_'),
+                    "invalid daily handle"
+                );
+            }
+            ensure!(
+                account
+                    .label
+                    .as_ref()
+                    .is_none_or(|s| !s.trim().is_empty() && s.len() <= 1024),
+                "invalid daily account label"
+            );
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WatchAccount {
+    /// Stable operator-assigned key; preserve it when changing a handle.
+    pub key: String,
+    pub provider: String,
+    pub user_id: Option<String>,
+    pub handle: Option<String>,
+    pub label: Option<String>,
+    pub enabled: bool,
+}
+impl Default for WatchAccount {
+    fn default() -> Self {
+        Self {
+            key: String::new(),
+            provider: "x".into(),
+            user_id: None,
+            handle: None,
+            label: None,
+            enabled: true,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DailyProviderKind {
+    #[default]
+    Disabled,
+    XWebSession,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DailyProvider {
+    pub kind: DailyProviderKind,
+    pub cookie: Option<SecretRef>,
+    pub bearer: Option<SecretRef>,
+    pub max_pages: usize,
+    pub page_size: usize,
+}
+impl Default for DailyProvider {
+    fn default() -> Self {
+        Self {
+            kind: DailyProviderKind::Disabled,
+            cookie: None,
+            bearer: None,
+            max_pages: 20,
+            page_size: 40,
+        }
     }
 }
 

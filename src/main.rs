@@ -16,8 +16,26 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Start one live Telegram poller and durable workers (explicit activation).
+    /// Start enabled Telegram workers and/or the opt-in daily planner.
     Run,
+    /// Plan a bounded inclusive local-date range, without provider collection.
+    DailyBackfill {
+        #[arg(long)]
+        from: String,
+        #[arg(long)]
+        through: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Inspect durable daily windows; continuation is the last returned window ID.
+    DailyStatus {
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+        #[arg(long)]
+        after: Option<String>,
+    },
+    /// Retry one failed/blocked daily window, preserving cursor and history.
+    DailyRetry { window_id: String },
     /// Inspect local tools, integrity and capabilities; never sends network requests.
     Doctor,
     /// Print local queue, retention, cache and projection metrics.
@@ -99,6 +117,26 @@ fn main() -> anyhow::Result<()> {
         Command::Run => {
             let path = cli.config.unwrap_or_else(Config::default_path);
             with_signals(|cancel| telegram_archive_bot::runtime::serve(path, cancel))?;
+        }
+        Command::DailyBackfill {
+            from,
+            through,
+            dry_run,
+        } => {
+            let config = Config::load(&cli.config.unwrap_or_else(Config::default_path))?;
+            let from = from.parse::<chrono::NaiveDate>()?;
+            let through = through.parse::<chrono::NaiveDate>()?;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs() as i64;
+            let preview =
+                telegram_archive_bot::planner::preview_backfill(&config, from, through, now)?;
+            let report = if dry_run {
+                preview
+            } else {
+                Store::open(&config.state_dir)?.backfill_daily(&config, from, through, now)?
+            };
+            println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::Replay { updates } => {
             let config = Config::load(&cli.config.unwrap_or_else(Config::default_path))?;
@@ -224,6 +262,29 @@ fn main() -> anyhow::Result<()> {
                         &store
                     )?)?
                 ),
+                Command::DailyStatus { limit, after } => {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)?
+                        .as_secs() as i64;
+                    let windows = store.daily_status(limit, after.as_deref(), now)?;
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(
+                            &serde_json::json!({"windows":windows,"external_effects_paused":store.recovery_paused()?,"timeline_provider":"not_installed"})
+                        )?
+                    );
+                }
+                Command::DailyRetry { window_id } => {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)?
+                        .as_secs() as i64;
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(
+                            &store.retry_daily_window(&config, &window_id, now)?
+                        )?
+                    );
+                }
                 Command::Init => println!(
                     "initialized schema {}",
                     telegram_archive_bot::storage::SCHEMA_VERSION

@@ -54,8 +54,11 @@ Producer and delivery contracts are documented in [speech](docs/speech.md),
 and [durable delivery](docs/delivery.md). The durable service dispatcher integrates
 these adapters. Follow [installation and operation](docs/operations.md) for an
 isolated offline replay, doctor/status, backup/restore, reload and Linux user
-systemd deployment. `run` explicitly activates a live Telegram poller; build,
-installation and replay do not activate it. Required real-provider and client
+systemd deployment. `run` starts a live Telegram poller when Telegram is enabled;
+build, installation and replay do not activate it. The opt-in
+[daily account/day planner](docs/daily-planner.md) also runs with Telegram and
+models disabled; timeline collection remains a separate DA03 adapter.
+Required real-provider and client
 acceptance remain separately recorded in F20.
 
 New application code is licensed under MIT OR Apache-2.0.

@@ -3,14 +3,14 @@
   "generated_by": "cargo metadata --locked --offline --format-version 1; license files from resolved crate sources and pinned upstream files",
   "includes": "Both full resolved graphs, including target-specific and development dependencies; this is a superset of linked Linux dependencies",
   "lockfiles": {
-    "Cargo.lock": "96545bf4b705dc6a97f7d1a1c532c82bc82a107219a19752c6e440f7d484da1e",
+    "Cargo.lock": "1f391624e42f0cb798b2f4b22823d8f0b90ab12035894db5044c3e91d12a2060",
     "integrations/hymt-bridge/Cargo.lock": "ac91361201ed494914d416a5c9a858eb95df7187adb7f317010d96f9ac632001"
   },
   "workspace_package_counts": {
-    "host": 390,
+    "host": 393,
     "bridge": 297
   },
-  "unique_dependency_count": 452,
+  "unique_dependency_count": 455,
   "standard_license_fallbacks": [
     [
       "eventsource-stream",
@@ -913,6 +913,23 @@
         {
           "name": "LICENSE.txt",
           "sha256": "946c9835d8034d24404f8cfec5f4654cee5dad17e944afc3d06d742cf2882831"
+        }
+      ]
+    },
+    {
+      "name": "chrono-tz",
+      "version": "0.10.4",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/chronotope/chrono-tz",
+      "workspaces": [
+        "host"
+      ],
+      "source_url": "https://crates.io/api/v1/crates/chrono-tz/0.10.4/download",
+      "license_files": [
+        {
+          "name": "LICENSE",
+          "sha256": "4789210f4df8abc03fce1cddd9c2ba517f184840687f2815d741de282c1aa93a"
         }
       ]
     },
@@ -4756,6 +4773,23 @@
     },
     {
       "name": "phf",
+      "version": "0.12.1",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "license": "MIT",
+      "repository": "https://github.com/rust-phf/rust-phf",
+      "workspaces": [
+        "host"
+      ],
+      "source_url": "https://crates.io/api/v1/crates/phf/0.12.1/download",
+      "license_files": [
+        {
+          "name": "LICENSE",
+          "sha256": "0ab4d106b6faac07fb6a051815fd1b4d862d730895e2d7d7358c2f13565e7a38"
+        }
+      ]
+    },
+    {
+      "name": "phf",
       "version": "0.13.1",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "license": "MIT",
@@ -4815,6 +4849,23 @@
         "host"
       ],
       "source_url": "https://crates.io/api/v1/crates/phf_macros/0.13.1/download",
+      "license_files": [
+        {
+          "name": "LICENSE",
+          "sha256": "0ab4d106b6faac07fb6a051815fd1b4d862d730895e2d7d7358c2f13565e7a38"
+        }
+      ]
+    },
+    {
+      "name": "phf_shared",
+      "version": "0.12.1",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "license": "MIT",
+      "repository": "https://github.com/rust-phf/rust-phf",
+      "workspaces": [
+        "host"
+      ],
+      "source_url": "https://crates.io/api/v1/crates/phf_shared/0.12.1/download",
       "license_files": [
         {
           "name": "LICENSE",

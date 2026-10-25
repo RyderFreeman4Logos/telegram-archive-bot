@@ -369,6 +369,11 @@ impl Store {
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         tx.execute("INSERT INTO operational_holds VALUES('restore','External side effects require explicit recovery reconciliation') ON CONFLICT DO NOTHING",[])?;
+        tx.execute(
+            "UPDATE daily_attempts SET state='interrupted',finished_at=?1 WHERE state='collecting'",
+            [now()],
+        )?;
+        tx.execute("UPDATE daily_windows SET state='partial',generation=generation+1,lease_until=NULL,reason='restored_interrupted' WHERE state='collecting'",[])?;
         tx.execute("UPDATE jobs SET state='paused',lease_until=NULL,generation=generation+1,error='restored_paused' WHERE state IN ('queued','running','retryable','paused')",[])?;
         tx.execute("UPDATE delivery_attempts SET state='unknown',finished_at=?1,error='restored_uncertain' WHERE state='sending'",[now()])?;
         tx.execute("UPDATE outbox SET state='unknown',lease_until=NULL,error='restored_uncertain' WHERE state='sending'",[])?;
