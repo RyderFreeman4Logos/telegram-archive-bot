@@ -126,6 +126,120 @@ async fn s87_controls_survive_real_adapter_readback_as_reversible_json() {
     );
 }
 
+// DA05 / #93: U+2028 loss was observed through actual ntn GET readback.
+// U+2029 exercises the deliberately conservative separator boundary offline.
+#[cfg(feature = "ntn")]
+async fn separator_roundtrip(separator: char, metadata_only: bool) {
+    let (root, config) = fixture("strip_separators");
+    let mut record = record();
+    record.title = format!("metadata {separator} preserved");
+    record.content = if metadata_only {
+        "ordinary body 🌍 e\u{301}\n\t literal \\u2028 \\u2029 \"".into()
+    } else {
+        format!("原文 🌍 e\u{301}\n\t literal \\u2028 \\u2029 \"{separator}").repeat(80)
+    };
+    let original = record.clone();
+    let verified = Adapter::new(&config, root.path())
+        .create(&record, &CancellationToken::new())
+        .await
+        .expect("separator-bearing body and metadata must survive lossy readback");
+    assert_eq!(
+        record, original,
+        "canonical local body must remain unchanged"
+    );
+    let remote: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.path().join("state.json")).unwrap()).unwrap();
+    let texts: Vec<&str> = remote["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| {
+            b[b["type"].as_str().unwrap()]["rich_text"][0]["text"]["content"]
+                .as_str()
+                .unwrap()
+        })
+        .collect();
+    assert!(texts.iter().all(|s| !s.contains(['\u{2028}', '\u{2029}'])));
+    assert!(texts.iter().all(|s| s.encode_utf16().count() <= 2000));
+    let start = texts
+        .iter()
+        .position(|s| *s == "Captured text (managed; JSON string encoding)")
+        .unwrap();
+    let metadata: serde_json::Value = serde_json::from_str(&texts[2..start].concat()).unwrap();
+    assert_eq!(metadata["canonical_version"], "notion-ordered-text-json-v2");
+    assert_eq!(metadata["content_encoding"], "json-string-v1");
+    assert_eq!(metadata["title"], record.title);
+    let decoded: String =
+        serde_json::from_str(&texts[start + 1..texts.len() - 2].concat()).unwrap();
+    assert_eq!(
+        decoded, record.content,
+        "independent decode must recover every separator and literal escape"
+    );
+    assert_eq!(
+        telegram_archive_bot::digest(&decoded),
+        verified.content_sha256
+    );
+    assert_eq!(metadata["content_utf8_sha256"], verified.content_sha256);
+    assert_eq!(
+        calls(root.path())
+            .iter()
+            .filter(|args| args.iter().any(|a| a == "POST"))
+            .count(),
+        1
+    );
+}
+
+#[cfg(feature = "ntn")]
+#[tokio::test]
+async fn s93_line_separator_body_and_metadata_roundtrip() {
+    separator_roundtrip('\u{2028}', false).await;
+}
+
+#[cfg(feature = "ntn")]
+#[tokio::test]
+async fn s93_paragraph_separator_body_and_metadata_roundtrip() {
+    separator_roundtrip('\u{2029}', false).await;
+}
+
+#[cfg(feature = "ntn")]
+#[tokio::test]
+async fn s93_line_separator_metadata_only_roundtrip() {
+    separator_roundtrip('\u{2028}', true).await;
+}
+
+#[cfg(feature = "ntn")]
+#[tokio::test]
+async fn s93_paragraph_separator_metadata_only_roundtrip() {
+    separator_roundtrip('\u{2029}', true).await;
+}
+
+#[tokio::test]
+async fn s93_separator_expansion_is_bounded_before_dispatch() {
+    for separator in ['\u{2028}', '\u{2029}'] {
+        let mut record = record();
+        record.content = separator.to_string().repeat(2000);
+        let config = Notion {
+            record_bytes: serde_json::to_vec(&record).unwrap().len() + 100,
+            ..Notion::default()
+        };
+        assert_eq!(record.plan(&config).unwrap_err().state, Failure::Limit);
+        #[cfg(feature = "ntn")]
+        {
+            let (root, mut ready) = fixture("strip_separators");
+            ready.record_bytes = config.record_bytes;
+            assert_eq!(
+                Adapter::new(&ready, root.path())
+                    .create(&record, &CancellationToken::new())
+                    .await
+                    .unwrap_err()
+                    .state,
+                Failure::Limit
+            );
+            assert!(calls(root.path()).is_empty());
+        }
+    }
+}
+
 #[tokio::test]
 async fn s87_control_encoding_expansion_is_bounded_before_dispatch() {
     let mut record = record();

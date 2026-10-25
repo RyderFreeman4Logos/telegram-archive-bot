@@ -87,6 +87,10 @@ else:
                 # Actual S87 readback dropped U+000C. Exercise its whole Cc class,
                 # preserving ordinary line breaks/tabs rather than echoing input.
                 item["text"]["content"] = "".join(c for c in item["text"]["content"] if unicodedata.category(c) != "Cc" or c in "\n\t")
+            elif mode == "strip_separators":
+                # DA05 / #93: actual readback omitted U+2028. U+2029 is a
+                # conservative synthetic same-class case, not live evidence.
+                item["text"]["content"] = item["text"]["content"].replace("\u2028", "").replace("\u2029", "")
             item["plain_text"] = item["text"]["content"]
             item["annotations"] = {"bold": True}  # harmless Notion-only formatting
     start = int(next((x.split("==", 1)[1] for x in args if x.startswith("start_cursor==")), "0"))

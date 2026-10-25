@@ -298,8 +298,8 @@ impl Record {
         );
         let content_sha256 = crate::digest(&self.content);
         // S87: Notion accepted a PDF's text but removed its U+000C on readback.
-        // Keep ordinary v1 plans byte-identical. Encode the rare lossy Cc case
-        // reversibly, including DEL/C1 that serde_json leaves as literal text.
+        // Keep ordinary v1 plans byte-identical. Encode lossy controls and the
+        // DA05/#93 Unicode separators reversibly, including metadata literals.
         let json_content = self.content.chars().any(unsafe_control)
             || std::str::from_utf8(&serialized)
                 .map_err(|_| Failure::InvalidPayload)?
@@ -416,10 +416,10 @@ impl PublicationPlan {
 }
 
 fn unsafe_control(ch: char) -> bool {
-    ch.is_control() && ch != '\n' && ch != '\t'
+    (ch.is_control() && ch != '\n' && ch != '\t') || matches!(ch, '\u{2028}' | '\u{2029}')
 }
 
-// Input is serialized JSON; escaping its remaining literal Cc characters keeps
+// Input is serialized JSON; escaping its remaining unsafe literal characters keeps
 // decoded strings identical. Pretty-print whitespace (LF/tab) remains readable.
 fn escape_json_controls(value: String, limit: usize) -> Result<String, PublicationError> {
     let bytes = value

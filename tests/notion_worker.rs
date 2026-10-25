@@ -120,9 +120,22 @@ fn worker_fixture() -> (
 #[cfg(feature = "ntn")]
 #[tokio::test]
 async fn s87_reopened_legacy_control_plan_never_changes_pins_or_dispatches() {
+    legacy_plan_preserves_pins("PDF text\n\n\u{c}").await;
+}
+
+#[cfg(feature = "ntn")]
+#[tokio::test]
+async fn s93_reopened_legacy_separator_plan_never_changes_pins_or_dispatches() {
+    for separator in ['\u{2028}', '\u{2029}'] {
+        legacy_plan_preserves_pins(&format!("canonical text {separator} retained")).await;
+    }
+}
+
+#[cfg(feature = "ntn")]
+async fn legacy_plan_preserves_pins(content: &str) {
     use telegram_archive_bot::notion::{ManagedBlock, Record};
     let (root, store, config) = worker_fixture();
-    store.capture(&capture("100", "PDF text\n\n\u{c}")).unwrap();
+    store.capture(&capture("100", content)).unwrap();
     drain_until(&store, &config, |m| m["states"]["complete"] == 2).await;
     let db = rusqlite::Connection::open(config.state_dir.join("archive.sqlite")).unwrap();
     let (id, encoded, key, page): (String, String, String, String) = db
