@@ -10,6 +10,7 @@ pub mod jobs;
 pub mod media;
 pub mod network;
 pub mod operator;
+pub mod planner;
 pub mod process;
 pub mod projection;
 pub mod recovery;

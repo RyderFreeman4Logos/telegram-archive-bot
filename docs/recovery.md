@@ -39,6 +39,9 @@ active job generations, expires their leases and pauses queued/running/retryable
 jobs. Unsent pending/retryable deliveries become paused; in-flight sends become
 **unknown**, with their attempt history retained. Previously unknown sends stay
 unknown. Pending push attempts become uncertain.
+Active daily collections become partial/interrupted with incremented generations;
+their cursors and immutable page receipts remain retained. The global hold also
+blocks automatic daily admissions and collection claims.
 
 A global recovery hold blocks all job claims, delivery claims and projection,
 including newly enqueued work, until explicitly cleared. Verification and
@@ -90,7 +93,8 @@ views, DA01 account/activity discovery evidence and exported text derivatives.
 Activity observations retain their original source-observation and revision/view
 pins, including unavailable targets and independent activity/publication time
 evidence. Older exports without activity records remain supported. Full schema
-13 backups also retain every account/activity table; restoring a supported older
+14 backups also retain every account/activity and operational planner table;
+daily plans/checkpoints are not included in semantic Git recovery. Restoring a supported older
 database adds the empty tables without changing existing source/view records.
 Original observation IDs retain view-edge
 provenance. The current revision is selected from the latest available complete

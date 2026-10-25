@@ -709,8 +709,8 @@ pub async fn serve(path: PathBuf, shutdown: CancellationToken) -> Result<()> {
     disable_missing_optional(&mut initial);
     initial.check_secrets()?;
     ensure!(
-        initial.telegram.enabled,
-        "run requires telegram.enabled; use replay for offline work"
+        initial.telegram.enabled || initial.daily.enabled,
+        "run requires Telegram or daily planning to be enabled"
     );
     let store = Store::open(&initial.state_dir)?;
     ensure!(
@@ -737,6 +737,7 @@ pub async fn serve(path: PathBuf, shutdown: CancellationToken) -> Result<()> {
         "doctor reports an enabled capability is unavailable"
     );
     let config = Arc::new(RwLock::new(ConfigManager::new(initial)?));
+    let telegram_enabled = config.read().await.snapshot().telegram.enabled;
     let relay = std::env::current_exe()?;
     // One worker per phase; shared semaphores also bound sibling phases using the same resource.
     let limits = config.read().await.snapshot().limits.clone();
@@ -764,22 +765,45 @@ pub async fn serve(path: PathBuf, shutdown: CancellationToken) -> Result<()> {
         let finalizers = finalizers.clone();
         workers.spawn(async move{while !cancel.is_cancelled(){let _permit=if let Some(resource)=&resource{tokio::select!{_=cancel.cancelled()=>break,p=resource.acquire()=>Some(p?)}}else{None};let _finalizer=if matches!(phase,Phase::Download|Phase::Synthesize){tokio::select!{_=cancel.cancelled()=>break,p=finalizers.acquire()=>Some(p?)}}else{None};if let Err(_error)=step(&store,phase,&relay,&cancel).await{crate::operator::log("worker_error",None,json!({"phase":phase}));}tokio::select!{_=cancel.cancelled()=>break,_=tokio::time::sleep(Duration::from_millis(200))=>{}}}Ok::<_,anyhow::Error>(())});
     }
-    {
+    if telegram_enabled {
         let store = store.clone();
         let config = config.clone();
         let cancel = shutdown.clone();
         workers.spawn(async move{while !cancel.is_cancelled(){let snapshot=config.read().await.snapshot();let count=telegram(&snapshot)?.poll_once(&store,&snapshot,&json!({"application":env!("CARGO_PKG_VERSION")}),&cancel).await;if count.is_err(){crate::operator::log("poll_error",None,json!({"failure":"transport-or-envelope"}));tokio::select!{_=cancel.cancelled()=>break,_=tokio::time::sleep(Duration::from_secs(2))=>{}}}}Ok::<_,anyhow::Error>(())});
     }
-    {
+    if telegram_enabled {
         let store = store.clone();
         let config = config.clone();
         let cancel = shutdown.clone();
         workers.spawn(async move{while !cancel.is_cancelled(){let snapshot=config.read().await.snapshot();let worker=DeliveryWorker{store:store.clone(),telegram:telegram(&snapshot)?,bot_id:snapshot.telegram.bot_id};if worker.send_next(&cancel).await.is_err(){crate::operator::log("delivery_error",None,json!({"failure":"inspect-outbox"}));}tokio::select!{_=cancel.cancelled()=>break,_=tokio::time::sleep(Duration::from_millis(200))=>{}}}Ok::<_,anyhow::Error>(())});
     }
+    {
+        let store = store.clone();
+        let config = config.clone();
+        let cancel = shutdown.clone();
+        workers.spawn(async move {
+            let mut last_snapshot:Option<Arc<Config>>=None;
+            let mut last_tick:Option<Instant>=None;
+            while !cancel.is_cancelled() {
+                let snapshot=config.read().await.snapshot();
+                if snapshot.daily.enabled && (last_snapshot.as_ref().is_none_or(|old|!Arc::ptr_eq(old,&snapshot))
+                    || last_tick.is_none_or(|t|t.elapsed()>=Duration::from_secs(snapshot.daily.interval_seconds))) {
+                    match store.daily_tick(&snapshot,now()) {
+                        Ok(report)=>crate::operator::log("daily_planner_tick",None,serde_json::to_value(report)?),
+                        Err(_)=>crate::operator::log("daily_planner_error",None,json!({"reason":"inspect_daily_state_and_config"})),
+                    }
+                    last_snapshot=Some(snapshot.clone());last_tick=Some(Instant::now());
+                }
+                if !snapshot.daily.enabled {last_snapshot=None;}
+                tokio::select!{_=cancel.cancelled()=>break,_=tokio::time::sleep(Duration::from_secs(1))=>{}}
+            }
+            Ok::<_,anyhow::Error>(())
+        });
+    }
     let mut hup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
     let mut interval = tokio::time::interval(Duration::from_secs(60));
     loop {
-        tokio::select! {_=shutdown.cancelled()=>break,_=hup.recv()=>{let mut manager=config.write().await;let current=manager.snapshot();let next=Config::load(&path).map(|mut n|{disable_missing_optional(&mut n);n});if next.as_ref().is_ok_and(|n|n.limits.downloads==limits.downloads&&n.limits.models==limits.models&&n.limits.syntheses==limits.syntheses&&n.limits.finalizers==limits.finalizers&&n.limits.deliveries==limits.deliveries&&n.telegram.enabled==current.telegram.enabled)&&next.is_ok_and(|n|manager.activate(n).is_ok()){graph_cache().lock().map_err(|_|Failure::Internal)?.clear();crate::operator::log("reload_applied",None,json!({"config_fingerprint":manager.snapshot().fingerprint()?}));}else{crate::operator::log("reload_rejected",None,json!({"reason":"invalid-config-or-admission-change-requires-restart"}));}},_=interval.tick()=>crate::operator::log("metrics",None,crate::operator::metrics(&store)?),result=workers.join_next()=>{shutdown.cancel();if let Some(result)=result{result??;}break;}}
+        tokio::select! {_=shutdown.cancelled()=>break,_=hup.recv()=>{let mut manager=config.write().await;let current=manager.snapshot();let next=Config::load(&path).map(|mut n|{disable_missing_optional(&mut n);n});if next.as_ref().is_ok_and(|n|n.limits.downloads==limits.downloads&&n.limits.models==limits.models&&n.limits.syntheses==limits.syntheses&&n.limits.finalizers==limits.finalizers&&n.limits.deliveries==limits.deliveries&&n.telegram.enabled==current.telegram.enabled&&store.validate_daily_config(n).is_ok())&&next.is_ok_and(|n|manager.activate(n).is_ok()){graph_cache().lock().map_err(|_|Failure::Internal)?.clear();crate::operator::log("reload_applied",None,json!({"config_fingerprint":manager.snapshot().fingerprint()?}));}else{crate::operator::log("reload_rejected",None,json!({"reason":"invalid-config-or-admission-change-requires-restart"}));}},_=interval.tick()=>crate::operator::log("metrics",None,crate::operator::metrics(&store)?),result=workers.join_next()=>{shutdown.cancel();if let Some(result)=result{result??;}break;}}
     }
     shutdown.cancel();
     let deadline = Duration::from_secs(limits.shutdown_seconds + 2);
