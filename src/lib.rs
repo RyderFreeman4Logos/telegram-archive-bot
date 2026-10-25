@@ -6,6 +6,8 @@ pub mod config;
 pub mod delivery;
 pub mod documents;
 pub mod egress;
+pub mod failure_report_worker;
+pub mod failure_reporting;
 pub mod jobs;
 pub mod media;
 pub mod network;

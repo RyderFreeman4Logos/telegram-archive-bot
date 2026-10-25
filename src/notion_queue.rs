@@ -183,8 +183,21 @@ impl Store {
     }
 
     pub(crate) fn notion_invalid_record(&self, intent: &Intent) -> Result<()> {
-        let changed = self.connection()?.execute("UPDATE notion_queue SET state='conflict',error='record_invalid_or_over_limit' WHERE id=?1 AND attempts=?2 AND state NOT IN ('creating','complete')", params![intent.id,intent.attempts])?;
+        let mut conn = self.connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = tx.execute("UPDATE notion_queue SET state='conflict',error='record_invalid_or_over_limit' WHERE id=?1 AND attempts=?2 AND state NOT IN ('creating','complete')", params![intent.id,intent.attempts])?;
         ensure!(changed == 1, "Notion invalid record ownership changed");
+        crate::failure_reporting::notion_settled(
+            &tx,
+            &intent.id,
+            intent.attempts,
+            &Err(PublicationError {
+                state: Failure::InvalidPayload,
+                page_id: None,
+                retry_after_seconds: None,
+            }),
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -269,6 +282,7 @@ impl Store {
             )?;
         }
         tx.execute("UPDATE notion_attempts SET finished_at=?1,outcome=?2,page_id=?3,receipt=?4 WHERE queue_id=?5 AND number=?6 AND finished_at IS NULL",params![now(),state,page,receipt,intent.id,intent.attempts])?;
+        crate::failure_reporting::notion_settled(&tx, &intent.id, intent.attempts, result)?;
         tx.commit()?;
         Ok(())
     }

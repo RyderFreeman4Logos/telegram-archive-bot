@@ -11,7 +11,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-pub const SCHEMA_VERSION: u32 = 17;
+pub const SCHEMA_VERSION: u32 = 18;
 
 #[derive(Clone, Debug)]
 pub struct Store {
@@ -181,9 +181,12 @@ impl Store {
         if version < 15 {
             tx.execute_batch(include_str!("../migrations/015_notion_publication.sql"))?;
         }
-        // Parent serially integrates actual DA04 migration016 before deployment.
+        // Actual migration016 is added by the pending serial DA04 integration.
         if version < 17 {
             tx.execute_batch(include_str!("../migrations/017_notion_pdf.sql"))?;
+        }
+        if version < 18 {
+            tx.execute_batch(include_str!("../migrations/018_failure_reporting.sql"))?;
         }
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         tx.commit()?;

@@ -378,6 +378,10 @@ impl Store {
         tx.execute("UPDATE notion_binding SET bootstrap_reconcile=1", [])?;
         tx.execute("UPDATE notion_attempts SET finished_at=?1,outcome='restored_reconcile' WHERE finished_at IS NULL", [now()])?;
         tx.execute("UPDATE notion_queue SET state='reconcile',may_have_remote=1,available_at=0,error='restored_uncertain' WHERE state!='complete'", [])?;
+        // A restored backup may predate a remote report. Search only until its identity is known.
+        tx.execute("UPDATE failure_reporting_state SET restore_through=(SELECT coalesce(max(id),0) FROM failure_incidents)", [])?;
+        tx.execute("UPDATE failure_reports SET state='reconcile',uncertain=1,next_at=0,error='restored_uncertain' WHERE state!='idle'", [])?;
+        tx.execute("UPDATE failure_report_attempts SET finished_at=?1,outcome='restored_reconcile' WHERE finished_at IS NULL", [now()])?;
         tx.execute("UPDATE jobs SET state='paused',lease_until=NULL,generation=generation+1,error='restored_paused' WHERE state IN ('queued','running','retryable','paused')",[])?;
         tx.execute("UPDATE delivery_attempts SET state='unknown',finished_at=?1,error='restored_uncertain' WHERE state='sending'",[now()])?;
         tx.execute("UPDATE outbox SET state='unknown',lease_until=NULL,error='restored_uncertain' WHERE state='sending'",[])?;
