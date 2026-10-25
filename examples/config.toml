@@ -91,3 +91,11 @@ page_size = 40
 # Future DA03 x_web_session settings require secret references, never values:
 # cookie = { kind = "file", name = "/private/x-session-cookie" }
 # bearer = { kind = "file", name = "/private/x-public-web-bearer" }
+
+# DA04: originals only; requires persisted discovered activities and source adapters.
+[daily.capture]
+enabled = false
+max_admissions = 100
+max_links = 8
+refresh_seconds = 86400
+retry_seconds = 300

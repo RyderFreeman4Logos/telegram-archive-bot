@@ -639,6 +639,7 @@ pub struct Daily {
     pub max_attempts: u32,
     pub accounts: Vec<WatchAccount>,
     pub provider: DailyProvider,
+    pub capture: DailyCapture,
 }
 impl Default for Daily {
     fn default() -> Self {
@@ -655,11 +656,19 @@ impl Default for Daily {
             max_attempts: 3,
             accounts: vec![],
             provider: DailyProvider::default(),
+            capture: DailyCapture::default(),
         }
     }
 }
 impl Daily {
     fn validate(&self) -> Result<()> {
+        ensure!(
+            (1..=1000).contains(&self.capture.max_admissions)
+                && self.capture.max_links <= 100
+                && (1..=31_536_000).contains(&self.capture.refresh_seconds)
+                && (1..=86400).contains(&self.capture.retry_seconds),
+            "invalid daily capture limits"
+        );
         self.timezone
             .parse::<chrono_tz::Tz>()
             .map_err(|_| anyhow::anyhow!("daily timezone must be an IANA name"))?;
@@ -736,6 +745,27 @@ impl Daily {
             );
         }
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DailyCapture {
+    pub enabled: bool,
+    pub max_admissions: usize,
+    pub max_links: usize,
+    pub refresh_seconds: u64,
+    pub retry_seconds: u64,
+}
+impl Default for DailyCapture {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_admissions: 100,
+            max_links: 8,
+            refresh_seconds: 86400,
+            retry_seconds: 300,
+        }
     }
 }
 
