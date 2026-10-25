@@ -39,7 +39,7 @@ pub fn metrics(store: &Store) -> Result<Value> {
         |r| r.get(0),
     )?;
     Ok(
-        json!({"queues":counts,"retained_blobs":blobs,"retained_bytes":bytes,"projection_event_lag":events.saturating_sub(cursor),"transformation_runs":runs,"cache_reuses":uses,"observed_host_cache_hit_fraction":if runs+uses>0{Some(uses as f64/(runs+uses) as f64)}else{None},"job_retries":retries,"token_cost_estimate":null,"token_cost_estimate_status":"provider-not-reported","external_effects_paused":store.recovery_paused()?}),
+        json!({"notion_publication":store.notion_metrics()?,"queues":counts,"retained_blobs":blobs,"retained_bytes":bytes,"projection_event_lag":events.saturating_sub(cursor),"transformation_runs":runs,"cache_reuses":uses,"observed_host_cache_hit_fraction":if runs+uses>0{Some(uses as f64/(runs+uses) as f64)}else{None},"job_retries":retries,"token_cost_estimate":null,"token_cost_estimate_status":"provider-not-reported","external_effects_paused":store.recovery_paused()?}),
     )
 }
 

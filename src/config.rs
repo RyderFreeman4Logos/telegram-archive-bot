@@ -820,16 +820,21 @@ impl Notion {
 
 pub struct ConfigManager {
     current: Arc<Config>,
+    notion_changed: tokio_util::sync::CancellationToken,
 }
 impl ConfigManager {
     pub fn new(config: Config) -> Result<Self> {
         config.validate()?;
         Ok(Self {
             current: Arc::new(config),
+            notion_changed: tokio_util::sync::CancellationToken::new(),
         })
     }
     pub fn snapshot(&self) -> Arc<Config> {
         self.current.clone()
+    }
+    pub(crate) fn notion_snapshot(&self) -> (Arc<Config>, tokio_util::sync::CancellationToken) {
+        (self.current.clone(), self.notion_changed.clone())
     }
     pub fn reload(&mut self, path: &Path) -> Result<()> {
         let next = Config::load(path)?;
@@ -843,6 +848,10 @@ impl ConfigManager {
             "state_dir and bot_id changes require restart"
         );
         next.check_secrets()?;
+        if serde_json::to_value(&next.notion)? != serde_json::to_value(&self.current.notion)? {
+            self.notion_changed.cancel();
+            self.notion_changed = tokio_util::sync::CancellationToken::new();
+        }
         self.current = Arc::new(next);
         Ok(())
     }

@@ -16,7 +16,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Start enabled Telegram workers and/or the opt-in daily planner.
+    /// Start durable workers, with Telegram polling only when enabled.
     Run,
     /// Plan a bounded inclusive local-date range, without provider collection.
     DailyBackfill {
@@ -40,6 +40,19 @@ enum Command {
     Doctor,
     /// Print local queue, retention, cache and projection metrics.
     Status,
+    /// List bounded publication identities and states without bodies or credentials.
+    NotionList {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// Schedule read-only remote-body reconciliation; an optional page ID is untrusted input.
+    NotionReconcile {
+        id: String,
+        #[arg(long)]
+        page_id: Option<String>,
+    },
+    /// Re-arm a known no-effect failure; uncertain remote writes cannot be recreated.
+    NotionRetry { id: String },
     /// Compute persisted updates without polling or sending; enabled providers may run.
     Replay { updates: std::path::PathBuf },
     /// Summarize read-only local files; with no paths, read paths from stdin.
@@ -283,6 +296,24 @@ fn main() -> anyhow::Result<()> {
                         serde_json::to_string_pretty(
                             &store.retry_daily_window(&config, &window_id, now)?
                         )?
+                    );
+                }
+                Command::NotionList { limit } => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&store.notion_list(limit)?)?
+                ),
+                Command::NotionReconcile { id, page_id } => {
+                    store.reconcile_notion(&id, page_id.as_deref())?;
+                    println!(
+                        "{}",
+                        serde_json::json!({"id":id,"scheduled":"read_only_reconciliation"})
+                    );
+                }
+                Command::NotionRetry { id } => {
+                    store.retry_notion(&id)?;
+                    println!(
+                        "{}",
+                        serde_json::json!({"id":id,"scheduled":"known_no_effect_retry"})
                     );
                 }
                 Command::Init => println!(
