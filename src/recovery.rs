@@ -358,10 +358,10 @@ impl Store {
         store
             .connection()?
             .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
+        drop(store);
         File::open(stage.path().join("archive.sqlite"))?.sync_all()?;
         sync_dir(&stage.path().join("blobs"))?;
         sync_dir(stage.path())?;
-        drop(store);
         publish(stage, destination)?;
         Ok(receipt)
     }
@@ -619,10 +619,10 @@ impl Store {
         store
             .connection()?
             .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
+        drop(store);
         File::open(stage.path().join("archive.sqlite"))?.sync_all()?;
         sync_dir(&stage.path().join("blobs"))?;
         sync_dir(stage.path())?;
-        drop(store);
         publish(stage, destination)?;
         Ok(receipt)
     }
