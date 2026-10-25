@@ -52,10 +52,9 @@ The ordinary block sequence is:
 3. Managed end marker and an explicit unmanaged annotations/analysis heading.
 
 Paragraph chunks contain at most 2000 UTF-16 units, conservatively satisfying
-Notion's 2000-character limit even for astral characters. Newlines, tabs, combining
-marks and control characters are preserved in JSON; no Markdown interpretation,
-Unicode normalization, inserted separators or text truncation occurs. Server
-rejection remains a visible failure. Requests contain at most 100 children and
+Notion's 2000-character limit even for astral characters. Ordinary newlines, tabs
+and combining marks retain their exact text. No Markdown interpretation,
+Unicode normalization, inserted separators or text truncation occurs. Requests contain at most 100 children and
 never exceed the configured payload cap (maximum 500000 bytes). Large records
 use sequential bounded append requests; a partially written page is not complete.
 
@@ -68,6 +67,27 @@ reordered, unexpected, child-containing or altered managed blocks are conflicts
 even if all stored digest markers remain unchanged. Notion rich-text styling and
 link attributes do not change the text projection. Refreshed signed attachment
 URLs are not part of this text schema; binary/PDF publication is DA07.
+
+**S87** — [#87](https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/87):
+real Notion readback accepted PDF text but omitted its final U+000C (form feed).
+The local canonical text and SHA256 remain unchanged. Text containing C0 controls
+other than LF/tab, DEL or C1 controls uses canonical version
+`notion-ordered-text-json-v2`. This also applies when serialized metadata contains
+literal DEL/C1 characters. Ordinary v1 plans remain byte-identical.
+
+The explicit metadata field `content_encoding: "json-string-v1"` and heading
+`Captured text (managed; JSON string encoding)` identify this representation.
+Its content paragraphs contain one JSON string, split only to satisfy the same
+2000-unit bound. All controls in that string are escaped; remaining literal
+DEL/C1 in metadata JSON are escaped too. A reader concatenates the content
+paragraphs **without separators**, JSON-decodes the string exactly once, then
+checks the recovered UTF-8 against `content_utf8_sha256`. Literal backslashes,
+quotes, astral characters, combining characters and every original control
+survive this decode. The actual readback verifier performs that decode and hash
+check after validating every returned block; an echoed metadata hash is not proof.
+Both the original serialized record and the expanded metadata plus encoded text
+must fit `notion.record_bytes`; block/request limits also apply before dispatch.
+Oversize representation is a visible failure, never silent truncation.
 
 Anything after the unmanaged heading belongs to humans/downstream agents. The
 adapter never patches existing content or deletes annotations: `verify` is
@@ -112,6 +132,12 @@ written remains uncertain; disabling does not erase that evidence.
 The outbox pins the full versioned record, deterministic publication key,
 canonical expected body digest and destination before dispatch. Attempts,
 known page ID, append/readback progress and verified block IDs are durable.
+If a planner upgrade changes a pinned representation, the worker records
+`publication_plan_changed` as a conflict before invoking ntn. It preserves the
+old record, key, expected digest, page and attempt history, allowing later queue
+items to proceed. It cannot silently adopt v2 for a v1 intent, recreate an
+uncertain page, or overwrite human edits. Existing S87 conflict pages remain
+conflicts; a new live acceptance run requires its own explicit recovery decision.
 Source observation documents retain metadata, evidence and typed relations;
 revision documents contain the exact source text. Source capture times use
 explicit Unix-second decimal strings from SQLite, while DA01 event/source time
@@ -251,3 +277,19 @@ missing/corrupt attachments, no text, upload expiry, signed URL refresh, old bac
 restore/hold, bounded old-page admission, read-only controls and manifest gaps.
 It does not establish live Notion authorization, a real workspace attachment,
 reader provider compatibility or deployed-runtime behavior.
+
+The S87 offline regressions additionally model control removal at the real child
+process readback boundary, independently decode all C0/DEL/C1 text plus Unicode,
+enforce expanded byte limits before any child invocation, and reopen an old v1
+intent to prove its pins survive without blocking later work. The retained first
+live PDF run failed text verification and performed no PDF upload. These offline
+results do not turn that run into a success or establish corrected live access.
+## Daily reader handoffs
+
+DA09 derives immutable daily roots and paginated exhaustive indexes through this
+same document/outbox pipeline. Verified page references, missing bodies, attachment
+fallbacks and external analysis/checkpoints have separate states. The
+[five-layer reader contract](reader-handoffs.md) documents complete traversal,
+absolute dates/SOP, resumable external assertions, portable exports and recovery.
+A root's selected corpus excludes its own publication dependency, preventing a
+self-publication revision loop. Inspect the root's DA06 queue receipt separately.

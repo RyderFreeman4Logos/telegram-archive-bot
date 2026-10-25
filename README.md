@@ -64,6 +64,8 @@ persistent actionable defects in the authorized repository (DA08 / #75).
 [Daily original-content capture](docs/daily-content-capture.md) hydrates persisted
 activities autonomously, retaining bounded context and external documents without
 creating model or delivery jobs.
+[Daily corpus manifests and reader handoffs](docs/reader-handoffs.md) provide
+paginated source indexes, portable exports and separate external L1–L5 checkpoints.
 Required real-provider and client
 acceptance remain separately recorded in F20.
 

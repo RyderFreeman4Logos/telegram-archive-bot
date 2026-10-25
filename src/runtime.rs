@@ -752,6 +752,11 @@ pub async fn serve(path: PathBuf, shutdown: CancellationToken) -> Result<()> {
         config.clone(),
         shutdown.clone(),
     ));
+    workers.spawn(crate::reader::serve(
+        store.clone(),
+        config.clone(),
+        shutdown.clone(),
+    ));
     {
         let store = store.clone();
         let relay = relay.clone();

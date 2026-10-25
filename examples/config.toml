@@ -99,3 +99,16 @@ max_admissions = 100
 max_links = 8
 refresh_seconds = 86400
 retry_seconds = 300
+# DA09: local corpus manifests; external readers own analysis and read assertions.
+[reader]
+enabled = true
+max_activities = 10000
+max_windows = 1000
+export_bytes = 100000000
+
+[reader.sop]
+id = "x-daily-briefing-v1"
+version = "1.0.0"
+# Configure the deployment's authoritative page; synthetic example only:
+# page_id = "22222222-2222-2222-2222-222222222222"
+# page_url = "https://www.notion.so/22222222222222222222222222222222"

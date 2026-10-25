@@ -56,6 +56,7 @@ pub struct Config {
     pub daily: Daily,
     pub notion: Notion,
     pub failure_reporting: FailureReporting,
+    pub reader: crate::reader::ReaderConfig,
 }
 
 impl Default for Config {
@@ -79,6 +80,7 @@ impl Default for Config {
             daily: Daily::default(),
             notion: Notion::default(),
             failure_reporting: FailureReporting::default(),
+            reader: crate::reader::ReaderConfig::default(),
         }
     }
 }
@@ -397,6 +399,7 @@ impl Config {
         ensure!(self.state_dir.is_absolute(), "state_dir must be absolute");
         self.notion.validate()?;
         self.failure_reporting.validate()?;
+        self.reader.validate()?;
         ensure!(
             !(self.synthesis.local && !self.synthesis.speakers.is_empty()),
             "local TTS cannot use multiple speakers"

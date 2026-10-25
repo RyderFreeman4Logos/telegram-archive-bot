@@ -22,6 +22,7 @@ pub mod operator;
 pub mod planner;
 pub mod process;
 pub mod projection;
+pub mod reader;
 pub mod recovery;
 pub mod runtime;
 pub mod sources;
