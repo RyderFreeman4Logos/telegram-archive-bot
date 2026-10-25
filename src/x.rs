@@ -74,7 +74,7 @@ impl Provider for Official {
         cancel: &'a CancellationToken,
     ) -> BoxFuture<'a, Result<Post, Failure>> {
         async move {
-            let url=format!("https://api.x.com/2/tweets/{id}?tweet.fields=created_at,lang,author_id,referenced_tweets,note_tweet,public_metrics&expansions=author_id&user.fields=name,username");
+            let url=format!("https://api.x.com/2/tweets/{id}?tweet.fields=created_at,lang,author_id,referenced_tweets,note_tweet,public_metrics,entities,attachments&expansions=author_id&user.fields=name,username");
             let response=self.http.get(&url,max_bytes,self.timeout,Some(&self.bearer),cancel).await?;
             if matches!(response.status,401|403) {return Ok(Post::unavailable(id,FetchStatus::Forbidden,"provider_authentication_or_access_denied"));}
             if response.status==404 {return Ok(Post::unavailable(id,FetchStatus::Missing,"not_found_is_not_proof_of_deletion"));}
@@ -166,6 +166,90 @@ fn related(id: &str, kind: RelationKind) -> Result<Related, Failure> {
     })
 }
 
+// DA04: expanded entity destinations, not display labels or invented URLs.
+fn outbound(data: &Value, relations: &mut Vec<Related>) -> Vec<String> {
+    let mut candidates = vec![];
+    for path in ["/entities/urls", "/note_tweet/entities/urls"] {
+        if let Some(entries) = data.pointer(path).and_then(Value::as_array) {
+            for entry in entries {
+                if let Some(url) = entry["unwound_url"]
+                    .as_str()
+                    .or_else(|| entry["expanded_url"].as_str())
+                {
+                    candidates.push(url);
+                }
+            }
+        }
+    }
+    if let Some(facets) = data["raw_text"]["facets"].as_array() {
+        for facet in facets {
+            if facet["type"] == "url"
+                && let Some(url) = facet["replacement"].as_str()
+            {
+                candidates.push(url);
+            }
+        }
+    }
+    let entities = &data["article"]["content"]["entityMap"];
+    let entities = entities
+        .as_array()
+        .map(|v| v.iter().collect::<Vec<_>>())
+        .or_else(|| entities.as_object().map(|v| v.values().collect()))
+        .unwrap_or_default();
+    for entry in entities {
+        let entity = entry.get("value").unwrap_or(entry);
+        if entity["type"] == "LINK"
+            && let Some(url) = entity["data"]["url"].as_str()
+        {
+            candidates.push(url);
+        }
+    }
+    if candidates.is_empty()
+        && let Some(body) = data["text"].as_str()
+    {
+        for word in body.split(|c: char| c.is_whitespace() || "<>\"'()[]".contains(c)) {
+            if word.starts_with("https://") || word.starts_with("http://") {
+                candidates.push(word.trim_end_matches(['.', ',', ';', ':']));
+            }
+        }
+    }
+    let mut normalized = std::collections::BTreeSet::new();
+    for raw in candidates {
+        let Ok(mut url) = crate::network::source_url(raw) else {
+            continue;
+        };
+        url.set_fragment(None);
+        let mut pairs = url
+            .query_pairs()
+            .filter(|(k, _)| !k.starts_with("utm_") && !matches!(k.as_ref(), "fbclid" | "gclid"))
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect::<Vec<_>>();
+        pairs.sort();
+        url.set_query(None);
+        if !pairs.is_empty() {
+            url.query_pairs_mut().extend_pairs(pairs);
+        }
+        if let Ok(identity) = Identity::from_url(url.as_str()) {
+            // X Article links are handled by selective Article enrichment.
+            if identity.provider == "web"
+                && matches!(
+                    url.host_str(),
+                    Some("x.com" | "twitter.com" | "www.x.com" | "www.twitter.com")
+                )
+            {
+                continue;
+            }
+            if normalized.insert(identity.url()) {
+                relations.push(Related {
+                    target: identity,
+                    kind: RelationKind::Links,
+                });
+            }
+        }
+    }
+    normalized.into_iter().collect()
+}
+
 pub fn parse_official(id: &str, payload: &Value) -> Result<Post, Failure> {
     let data = &payload["data"];
     if data.is_null() {
@@ -203,6 +287,7 @@ pub fn parse_official(id: &str, payload: &Value) -> Result<Post, Failure> {
         .and_then(|users| users.iter().find(|u| u["id"] == data["author_id"]))
         .and_then(|u| text(u, "name"));
     let article_link = article_link(body) || data["article"].is_object();
+    let outbound_links = outbound(data, &mut relations);
     Ok(Post {
         id: id.into(),
         content: Some(Content {
@@ -221,7 +306,7 @@ pub fn parse_official(id: &str, payload: &Value) -> Result<Post, Failure> {
         },
         relations,
         previews: vec![],
-        evidence: json!({"public_metrics":data["public_metrics"],"article_hydrated":false,"limitation":if article_link{Some("article_link_requires_fallback_hydration")}else{None}}),
+        evidence: json!({"public_metrics":data["public_metrics"],"author_id":data["author_id"],"outbound_links":outbound_links,"attachments":data["attachments"],"media_text_status":if data["attachments"].is_object(){Some("references_only_not_transcribed")}else{None},"article_hydrated":false,"limitation":if article_link{Some("article_link_requires_fallback_hydration")}else{None}}),
         raw: vec![],
     })
 }
@@ -241,6 +326,9 @@ pub fn parse_fx(id: &str, payload: &Value) -> Result<Post, Failure> {
             FetchStatus::Missing,
             "provider_not_found",
         ));
+    }
+    if code == 429 {
+        return Err(Failure::RateLimited);
     }
     if code >= 500 {
         return Err(Failure::Unavailable);
@@ -277,6 +365,12 @@ pub fn parse_fx(id: &str, payload: &Value) -> Result<Post, Failure> {
         return Ok(post);
     }
     let mut body = text(data, "text").unwrap_or_default();
+    if let Some(raw) = data["raw_text"]["text"]
+        .as_str()
+        .filter(|raw| raw.len() > body.len())
+    {
+        body = raw.into();
+    }
     let mut title = None;
     let mut status = FetchStatus::Complete;
     let mut limitations = vec![];
@@ -366,6 +460,7 @@ pub fn parse_fx(id: &str, payload: &Value) -> Result<Post, Failure> {
             ));
         }
     }
+    let outbound_links = outbound(data, &mut relations);
     Ok(Post {
         id: id.into(),
         content: Some(Content {
@@ -380,7 +475,7 @@ pub fn parse_fx(id: &str, payload: &Value) -> Result<Post, Failure> {
         status,
         relations,
         previews,
-        evidence: json!({"likes":data["likes"],"views":data["views"],"limitations":limitations,"article_hydrated":article_hydrated}),
+        evidence: json!({"likes":data["likes"],"views":data["views"],"author_id":data["author"]["id"],"outbound_links":outbound_links,"attachments":data["media"],"media_text_status":if data["media"].is_object(){Some("references_only_not_transcribed")}else{None},"limitations":limitations,"article_hydrated":article_hydrated}),
         raw: vec![],
     })
 }
@@ -471,6 +566,64 @@ impl Traversal {
 }
 
 impl XGraph {
+    /// Daily capture prefers the configured free fallback before other providers.
+    pub fn configured_daily(config: &Config) -> anyhow::Result<Self> {
+        let mut graph = Self::configured(config)?;
+        graph.providers.sort_by_key(|p| {
+            if p.name() == "fxembed-api-v2" {
+                0
+            } else if p.article_only() {
+                2
+            } else {
+                1
+            }
+        });
+        Ok(graph)
+    }
+    /// One durable-queue node, preserving raw responses and embedded previews.
+    pub async fn capture_one(
+        &self,
+        store: &Store,
+        source: &Identity,
+        config: &Config,
+        cancel: &CancellationToken,
+    ) -> anyhow::Result<Vec<Capture>> {
+        anyhow::ensure!(source.provider == "x", "invalid X capture identity");
+        let posts = self
+            .fetch(&source.external_id, config.limits.input_bytes, true, cancel)
+            .await?;
+        let mut captures = vec![];
+        for (provider, post) in posts {
+            let raw_digest = if post.raw.is_empty() {
+                None
+            } else {
+                Some(store.publish_bytes(&post.raw)?.digest)
+            };
+            captures.push(Capture {
+                identity: source.clone(),
+                submitted_url: Some(source.url()),
+                content: post.content,
+                status: post.status,
+                extractor: provider,
+                evidence: post.evidence,
+                raw_digest,
+                relations: post.relations,
+            });
+            for (id, preview) in post.previews {
+                captures.push(Capture {
+                    identity: Identity::x(&id)?,
+                    submitted_url: None,
+                    content: Some(preview),
+                    status: FetchStatus::Partial,
+                    extractor: "embedded-quote-preview".into(),
+                    evidence: json!({"limitation":"excerpt_only"}),
+                    raw_digest: None,
+                    relations: vec![],
+                });
+            }
+        }
+        Ok(captures)
+    }
     pub fn new(providers: Vec<Arc<dyn Provider>>) -> Self {
         Self {
             providers,
@@ -567,7 +720,11 @@ impl XGraph {
             {
                 Ok(post) => post,
                 Err(Failure::Cancelled) => return Err(Failure::Cancelled),
-                Err(error) => Post::unavailable(id, FetchStatus::Error, &error.to_string()),
+                Err(error) => {
+                    let mut post = Post::unavailable(id, FetchStatus::Error, &error.to_string());
+                    post.evidence["failure_class"] = json!(error);
+                    post
+                }
             };
             if post.id != id {
                 return Err(Failure::InvalidOutput);
@@ -683,6 +840,9 @@ impl XGraph {
                 let mut relations = post.relations;
                 relations.sort_by_key(|r| (r.kind, r.target.external_id.clone()));
                 for relation in &relations {
+                    if relation.target.provider != "x" {
+                        continue;
+                    }
                     queue.push_back((
                         relation.target.external_id.clone(),
                         depth + 1,

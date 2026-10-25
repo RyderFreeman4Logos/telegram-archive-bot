@@ -126,7 +126,12 @@ fn classify(response: &crate::network::Response) -> Option<&'static str> {
         Err(_) => return Some("provider_invalid_json"),
     };
     if value.get("code").is_some_and(|code| code != 200) {
-        return Some("provider_api_failure");
+        return Some(match value["code"].as_u64() {
+            Some(401 | 403) => "authentication_or_access_denied",
+            Some(404) => "timeline_capability_unavailable",
+            Some(429) => "rate_limited",
+            _ => "provider_api_failure",
+        });
     }
     if let Some(errors) = value
         .get("errors")
@@ -145,6 +150,19 @@ fn classify(response: &crate::network::Response) -> Option<&'static str> {
         });
     }
     None
+}
+
+fn provider_failure(error: crate::jobs::Failure, transport: &'static str) -> &'static str {
+    use crate::jobs::Failure;
+    match error {
+        Failure::RateLimited => "rate_limited",
+        Failure::InvalidInput | Failure::ToolMissing => "provider_pending_configuration",
+        Failure::Unavailable => "provider_unavailable",
+        Failure::Cancelled | Failure::LeaseLost => "cancelled",
+        Failure::InvalidOutput => "invalid_timeline_page",
+        Failure::Network | Failure::Timeout => transport,
+        _ => "collection_state_or_storage_error",
+    }
 }
 
 pub async fn collect_lease(
@@ -208,13 +226,13 @@ pub async fn collect_lease(
                 .ok_or_else(|| anyhow::anyhow!("missing account handle"))?;
             let response = match provider.lookup(handle, cancel).await {
                 Ok(value) => value,
-                Err(_) => {
+                Err(error) => {
                     return finish(
                         store,
                         lease,
                         &cursor,
                         DayState::Blocked,
-                        "account_lookup_transport",
+                        provider_failure(error, "account_lookup_transport"),
                         json!({}),
                         None,
                     );
@@ -303,13 +321,13 @@ pub async fn collect_lease(
             .await
         {
             Ok(value) => value,
-            Err(_) => {
+            Err(error) => {
                 return finish(
                     store,
                     lease,
                     &cursor,
                     DayState::Blocked,
-                    "timeline_transport",
+                    provider_failure(error, "timeline_transport"),
                     json!({}),
                     None,
                 );
@@ -412,7 +430,7 @@ pub async fn collect_lease(
         drop(verified_raw);
         cursor.last_raw = Some(raw.digest);
         if !replayed_overlap {
-            store.checkpoint_daily(lease,&serde_json::to_string(&cursor)?,&json!({"page":evidence,"scan":cursor.scan,"dispositions":page.dispositions.iter().take(100).collect::<Vec<_>>(),"disposition_count":page.dispositions.len(),"dispositions_truncated":page.dispositions.len()>100}),now())?;
+            store.checkpoint_daily(lease,&serde_json::to_string(&cursor)?,&json!({"provider":provider.name(),"coverage_complete":cursor.scan.complete(),"page":evidence,"scan":cursor.scan,"dispositions":page.dispositions.iter().take(100).collect::<Vec<_>>(),"disposition_count":page.dispositions.len(),"dispositions_truncated":page.dispositions.len()>100}),now())?;
         }
         if cursor.scan.ended {
             return finish(
@@ -926,6 +944,27 @@ mod tests {
             store.daily_window(&id, now()).unwrap().reason.as_deref(),
             Some("coverage_gaps")
         );
+        let conn = store.connection().unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT count(*) FROM failure_incidents WHERE actionable=1",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0,
+            "scan budgets and anonymous coverage gaps are not actionable defects"
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT count(*) FROM failure_events WHERE outcome='recovered'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0,
+            "an explicit end with known gaps does not establish recovery"
+        );
     }
     #[tokio::test]
     async fn many_activities_verify_one_shared_raw_page_only_once() {
@@ -1054,6 +1093,141 @@ mod tests {
         assert_eq!(
             store.daily_window(&id, now()).unwrap().state,
             DayState::Complete
+        );
+    }
+    #[tokio::test]
+    async fn failure_reporting_producer_timeline_is_private_transactional_and_class_matched() {
+        let (_root, store, mut config, id) = setup();
+        config.daily.max_attempts = 1;
+        let cancel = CancellationToken::new();
+        let collect = |status: u16| {
+            let mut raw = response(vec![], None, true);
+            raw.status = status;
+            if status != 200 {
+                raw.bytes = br#"{"private":"PRIVATE_WATCHLIST_AND_BODY"}"#.to_vec();
+            }
+            Fixture {
+                pages: Mutex::new(VecDeque::from([(None, raw)])),
+            }
+        };
+        let lease = store.claim_daily_window(&config, now()).unwrap().unwrap();
+        collect_lease(&store, &lease, &collect(503), &cancel)
+            .await
+            .unwrap();
+        let conn = store.connection().unwrap();
+        let counts:(i64,i64)=conn.query_row("SELECT count(*),coalesce(sum(actionable),0) FROM failure_incidents WHERE json_extract(metadata,'$.subsystem')='timeline'",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+        assert_eq!(
+            counts,
+            (1, 1),
+            "actual timeline settlement must retain actionable failure"
+        );
+        assert_eq!(
+            store.daily_window(&id, now()).unwrap().reason.as_deref(),
+            Some("attempt_budget_exhausted")
+        );
+        let public: String = conn
+            .query_row(
+                "SELECT public_sample FROM failure_events LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            !public.contains("PRIVATE_")
+                && !public.contains("https://")
+                && !public.contains("fixture")
+        );
+        drop(conn);
+        store.retry_daily_window(&config, &id, now()).unwrap();
+        let lease = store.claim_daily_window(&config, now()).unwrap().unwrap();
+        collect_lease(&store, &lease, &collect(429), &cancel)
+            .await
+            .unwrap();
+        let conn = store.connection().unwrap();
+        assert_eq!(conn.query_row("SELECT actionable FROM failure_incidents WHERE json_extract(metadata,'$.error_class')='rate_limited'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+        drop(conn);
+        store.retry_daily_window(&config, &id, now()).unwrap();
+        let lease = store.claim_daily_window(&config, now()).unwrap().unwrap();
+        // Reporting failure is in the same transaction as the durable collection result.
+        store.connection().unwrap().execute_batch("CREATE TRIGGER reject_report_event BEFORE INSERT ON failure_events BEGIN SELECT RAISE(ABORT,'fixture reporter persistence failure'); END;").unwrap();
+        assert!(
+            collect_lease(&store, &lease, &collect(200), &cancel)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            store.daily_window(&id, now()).unwrap().state,
+            DayState::Collecting
+        );
+        store
+            .connection()
+            .unwrap()
+            .execute_batch("DROP TRIGGER reject_report_event")
+            .unwrap();
+        collect_lease(&store, &lease, &collect(200), &cancel)
+            .await
+            .unwrap();
+        let conn = store.connection().unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT count(*) FROM failure_incidents WHERE state='active'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT count(*) FROM failure_events WHERE outcome='recovered'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            2
+        );
+        let (_other, clean, clean_config, _) = setup();
+        tick(&clean, &clean_config, &collect(200), &cancel)
+            .await
+            .unwrap();
+        assert_eq!(
+            clean.failure_report_status(10).unwrap()["events"],
+            0,
+            "successful operations without a prior failure create no incidents"
+        );
+    }
+
+    #[test]
+    fn failure_reporting_producer_blocked_terminal_cursor_is_not_recovery() {
+        let (_root, store, config, id) = setup();
+        let lease = store.claim_daily_window(&config, now()).unwrap().unwrap();
+        store
+            .finish_daily_window(
+                &lease,
+                DailyProgress {
+                    state: DayState::Blocked,
+                    cursor: None,
+                    reason: Some("timeline_provider_changed".into()),
+                    evidence: json!({"provider":"x-web-session-v1"}),
+                    coverage_complete: true,
+                },
+                now(),
+            )
+            .unwrap();
+        assert_eq!(
+            store.daily_window(&id, now()).unwrap().state,
+            DayState::Blocked
+        );
+        let c = store.connection().unwrap();
+        assert_eq!(c.query_row("SELECT count(*) FROM failure_events WHERE outcome='failed' AND json_extract(private_record,'$.error_class')='pending_configuration'",[],|r|r.get::<_,i64>(0)).unwrap(),1,"a retained terminal cursor cannot prove a blocked provider operation succeeded");
+        assert_eq!(
+            c.query_row(
+                "SELECT count(*) FROM failure_events WHERE outcome='recovered'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
         );
     }
 }

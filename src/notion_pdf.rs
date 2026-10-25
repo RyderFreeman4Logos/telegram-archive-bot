@@ -371,6 +371,41 @@ pub(crate) async fn tick(
     let changed=tx.execute("UPDATE notion_queue SET state=?1,receipt=?2,error=?3,available_at=?4 WHERE id=?5 AND state='creating' AND attempts=?6",params![outcome,encoded,state.reason,now().saturating_add(config.notion.retry_seconds as i64),intent.id,intent.attempts])?;
     ensure!(changed == 1, "PDF settlement ownership changed");
     tx.execute("UPDATE notion_attempts SET finished_at=?1,outcome=?2,page_id=?3,receipt=?4 WHERE queue_id=?5 AND number=?6 AND finished_at IS NULL",params![now(),outcome,job.text_page.page_id,encoded,intent.id,intent.attempts])?;
+    use crate::failure_reporting::{ErrorClass, Producer, Subsystem};
+    use crate::notion::Failure;
+    let class = match &result {
+        Ok(())
+            if state.attachment_state == "verified"
+                && state.verified_sha256.as_deref() == Some(&job.original.sha256) =>
+        {
+            None
+        }
+        Ok(()) => Some(ErrorClass::Unavailable),
+        Err(error) => Some(match error.state {
+            Failure::Disabled
+            | Failure::CompiledOut
+            | Failure::PendingConfiguration
+            | Failure::UnsupportedTool
+            | Failure::BlockedAuth => ErrorClass::PendingConfiguration,
+            Failure::RetryWait => ErrorClass::RateLimited,
+            Failure::Conflict => ErrorClass::RemoteConflict,
+            Failure::Cancelled => ErrorClass::Cancelled,
+            Failure::InvalidPayload => ErrorClass::Internal,
+            Failure::Limit => ErrorClass::Unavailable,
+            Failure::InvalidOutput => ErrorClass::InvalidResponse,
+            Failure::Reconcile | Failure::Unavailable => ErrorClass::Transport,
+        }),
+    };
+    Producer {
+        subsystem: Subsystem::Notion,
+        provider: "notion",
+        operation: "pdf_attachment",
+        schema: "2026-03-11",
+        stream: &format!("pdf:{}", intent.id),
+        source: &intent.id,
+        window: None,
+    }
+    .settle(&tx, &intent.attempts.to_string(), now(), class)?;
     tx.commit()?;
     Ok(())
 }

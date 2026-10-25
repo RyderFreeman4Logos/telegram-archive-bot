@@ -181,7 +181,9 @@ impl Store {
         if version < 15 {
             tx.execute_batch(include_str!("../migrations/015_notion_publication.sql"))?;
         }
-        // Actual migration016 is added by the pending serial DA04 integration.
+        if version < 16 {
+            tx.execute_batch(include_str!("../migrations/016_daily_capture.sql"))?;
+        }
         if version < 17 {
             tx.execute_batch(include_str!("../migrations/017_notion_pdf.sql"))?;
         }

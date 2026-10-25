@@ -42,6 +42,19 @@ impl ErrorClass {
                 | Self::Internal
         )
     }
+
+    pub(crate) fn from_job(error: crate::jobs::Failure) -> Self {
+        use crate::jobs::Failure;
+        match error {
+            Failure::Network | Failure::Timeout | Failure::Unavailable => Self::Transport,
+            Failure::RateLimited => Self::RateLimited,
+            Failure::InvalidInput | Failure::ToolMissing => Self::PendingConfiguration,
+            Failure::InvalidOutput => Self::InvalidResponse,
+            Failure::Cancelled | Failure::LeaseLost => Self::Cancelled,
+            Failure::ToolExit | Failure::ModelTruncated | Failure::ModelRefused => Self::Extraction,
+            Failure::DiskFull | Failure::Internal => Self::Internal,
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -103,6 +116,154 @@ impl FailureEvent {
     pub fn fingerprint(&self) -> Result<String> {
         Ok(digest(serde_json::to_vec(&self.metadata()?)?))
     }
+}
+
+/// A bounded, private producer boundary inside the caller's settlement transaction.
+/// `None` means verified success, and only clears matching, currently active classes.
+pub(crate) struct Producer<'a> {
+    pub subsystem: Subsystem,
+    pub provider: &'a str,
+    pub operation: &'a str,
+    pub schema: &'a str,
+    pub stream: &'a str,
+    pub source: &'a str,
+    pub window: Option<&'a str>,
+}
+impl Producer<'_> {
+    pub fn settle(
+        &self,
+        tx: &Transaction<'_>,
+        attempt: &str,
+        time: i64,
+        failure: Option<ErrorClass>,
+    ) -> Result<()> {
+        let stream_key = digest(self.stream);
+        if failure.is_none()
+            && !tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM failure_streams WHERE stream_key=?1 AND consecutive>0)",
+                [&stream_key],
+                |r| r.get::<_, bool>(0),
+            )?
+        {
+            return Ok(());
+        }
+        let classes = [
+            ErrorClass::Transport,
+            ErrorClass::InvalidResponse,
+            ErrorClass::Extraction,
+            ErrorClass::Integrity,
+            ErrorClass::Internal,
+            ErrorClass::Deleted,
+            ErrorClass::Private,
+            ErrorClass::Unavailable,
+            ErrorClass::RateLimited,
+            ErrorClass::PendingConfiguration,
+            ErrorClass::RemoteConflict,
+            ErrorClass::Cancelled,
+        ];
+        for class in classes {
+            if failure.is_some_and(|failed| failed != class) {
+                continue;
+            }
+            let outcome = if failure.is_some() {
+                Outcome::Failed
+            } else {
+                Outcome::Recovered
+            };
+            let event_id = format!("{}:{attempt}:{class:?}:{outcome:?}", self.stream);
+            let observed_at = tx
+                .query_row(
+                    "SELECT observed_at FROM failure_events WHERE event_id=?1",
+                    [digest(&event_id)],
+                    |r| r.get::<_, i64>(0),
+                )
+                .optional()?
+                .unwrap_or(time);
+            let event = FailureEvent {
+                event_id,
+                stream_id: self.stream.into(),
+                subsystem: self.subsystem,
+                provider: self.provider.into(),
+                operation: self.operation.into(),
+                error_class: class,
+                provider_schema: self.schema.into(),
+                observed_at,
+                outcome,
+                window_id: self.window.map(str::to_owned),
+                source: Source::Private(self.source.into()),
+                public_excerpt: None,
+                private_details: format!("{} settlement: {class:?}", self.operation),
+                redactions: Vec::new(),
+            };
+            if failure.is_none() && !tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM failure_streams WHERE stream_key=?1 AND fingerprint=?2 AND consecutive>0)",
+                params![stream_key,event.fingerprint()?], |r| r.get::<_, bool>(0),
+            )? {
+                continue;
+            }
+            record_in_tx(tx, &event)?;
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn timeline_settled(
+    tx: &Transaction<'_>,
+    lease: &crate::planner::DailyLease,
+    evidence: &Value,
+    reason: Option<&str>,
+    complete: bool,
+    attempt: &str,
+    time: i64,
+) -> Result<()> {
+    let Some(provider @ ("fx-twitter-v2" | "x-web-session-v1")) = evidence["provider"].as_str()
+    else {
+        return Ok(());
+    };
+    let class = if complete {
+        None
+    } else {
+        Some(match reason {
+            Some(
+                "account_lookup_transport"
+                | "timeline_transport"
+                | "provider_http_failure"
+                | "provider_api_failure"
+                | "provider_graphql_error"
+                | "provider_unavailable",
+            ) => ErrorClass::Transport,
+            Some("provider_invalid_json" | "invalid_timeline_page") => ErrorClass::InvalidResponse,
+            Some("collection_state_or_storage_error") => ErrorClass::Internal,
+            Some(
+                "authentication_or_access_denied"
+                | "authentication_or_challenge"
+                | "timeline_provider_changed"
+                | "provider_pending_configuration",
+            ) => ErrorClass::PendingConfiguration,
+            Some("rate_limited") => ErrorClass::RateLimited,
+            Some("cancelled") => ErrorClass::Cancelled,
+            Some(
+                "coverage_gaps"
+                | "cursor_or_coverage_gap"
+                | "cursor_stalled"
+                | "provider_scan_budget"
+                | "account_identity_unavailable"
+                | "timeline_capability_unavailable"
+                | "recovered_terminal_page",
+            ) => ErrorClass::Unavailable,
+            _ => return Ok(()),
+        })
+    };
+    Producer {
+        subsystem: Subsystem::Timeline,
+        provider,
+        operation: "collection",
+        schema: "timeline-v1",
+        stream: &format!("timeline:{}", lease.window.plan.id),
+        source: &lease.window.plan.id,
+        window: Some(&lease.window.plan.id),
+    }
+    .settle(tx, attempt, time, class)
 }
 
 /// The caller declares the canonical source public; strip authentication and ephemeral parameters.

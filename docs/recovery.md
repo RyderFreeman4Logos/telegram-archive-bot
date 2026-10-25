@@ -41,7 +41,10 @@ jobs. Unsent pending/retryable deliveries become paused; in-flight sends become
 unknown. Pending push attempts become uncertain.
 Active daily collections become partial/interrupted with incremented generations;
 their cursors and immutable page receipts remain retained. The global hold also
-blocks automatic daily admissions and collection claims.
+blocks automatic daily admissions and collection claims. Capture-only work
+also retains its completed nodes and immutable origins, expires its global lease
+and records interrupted attempts; hydration and origin materialization pause
+under the same hold. See [daily content capture](daily-content-capture.md).
 
 A global recovery hold blocks all job claims, delivery claims and projection,
 including newly enqueued work, until explicitly cleared. Verification and

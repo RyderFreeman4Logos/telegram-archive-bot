@@ -335,9 +335,37 @@ async fn disabled_missing_auth_expected_gaps_and_transient_recovery_never_create
     assert!(f.calls().is_empty());
     f.config.enabled = true;
     let token = f.config.token.take();
-    f.tick(112).await;
-    assert!(f.calls().is_empty());
-    assert_eq!(f.status()["reports"][0]["state"], "pending_configuration");
+    // Missing-auth readiness still needs local admission; make the no-effect busy branch explicit.
+    use std::os::unix::fs::OpenOptionsExt;
+    let guard = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o600)
+        .open(f.store.root().join("failure-report.lock"))
+        .unwrap();
+    fs2::FileExt::lock_exclusive(&guard).unwrap();
+    let release = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        drop(guard);
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        assert!(
+            !f.tick(112).await,
+            "missing credentials must never dispatch work"
+        );
+        assert!(f.calls().is_empty());
+        if f.status()["reports"][0]["state"] == "pending_configuration" {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "readiness must be persisted after local admission"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    release.await.unwrap();
     f.config.token = token;
     f.mode("auth");
     f.work_tick(114).await;

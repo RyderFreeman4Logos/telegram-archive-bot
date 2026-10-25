@@ -61,6 +61,9 @@ models disabled; timeline collection remains a separate DA03 adapter.
 The independent [automatic failure reporter](docs/failure-reporting.md) retains
 private diagnostics and uses explicitly configured `gh` credentials to aggregate
 persistent actionable defects in the authorized repository (DA08 / #75).
+[Daily original-content capture](docs/daily-content-capture.md) hydrates persisted
+activities autonomously, retaining bounded context and external documents without
+creating model or delivery jobs.
 Required real-provider and client
 acceptance remain separately recorded in F20.
 

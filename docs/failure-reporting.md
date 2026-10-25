@@ -41,10 +41,28 @@ errors are safe local categories and cannot recursively create incidents.
 `Store::record_failure(&FailureEvent)` records an event transactionally without
 subprocesses. The crate-internal `failure_reporting::record_in_tx` is the same
 boundary for a collector's existing settlement transaction. Notion validation,
-failure settlement and verified recovery already use this transaction boundary.
-Timeline and content collectors must call it at their own durable settlement
-points during serial integration; this isolated leaf does not invent observations
-for those adapters.
+text publication, PDF attachment, timeline collection and original-content
+capture use their actual durable settlement transactions. A rollback also removes
+the report event. No reporter subprocess runs inside these transactions.
+
+Timeline attempts retain the original safe failure category even when the final
+window reason becomes `attempt_budget_exhausted`. Successful, fully covered
+terminal pages can recover the same window's prior classes. An old terminal
+cursor alone does not prove that a blocked operation succeeded. Capture retains
+typed provider errors through the X graph and treats absent providers or explicit
+credential references as `pending_configuration`. Missing content, coverage and
+media gaps remain non-actionable. Temporary provider unavailability (including
+5xx) is transport failure; an Fx response body with code 429 remains a rate-limit
+gap. Capture recovery requires retained revision
+pins without omissions; PDF recovery requires verified attachment bytes matching
+the original digest. A portable PDF-unavailable status is not recovery.
+
+These automatic producers always use private source references, even for public
+X URLs, because watchlist membership and discovery windows are private. They
+publish static typed diagnostics, never provider bodies, account lists, arbitrary
+exception strings or excerpts. New successful operations emit no synthetic
+recovery event. Matching includes stream, class, provider, schema and application
+version; success does not clear unrelated defects or earlier version fingerprints.
 
 - `event_id` is a stable observation/attempt identity. Replaying identical input
   is a no-op; conflicting data under that ID is rejected.
@@ -126,16 +144,17 @@ Git exports exclude this private operational accounting and its authentication.
 
 ## Integration and acceptance boundary
 
-Migration 018 belongs to this leaf. The isolated base is schema 015; independently
-owned 016 and 017 must be applied in order during parent integration before 018.
-Do not deploy this isolated migration sequence. The historical-schema fixture
+The integrated migration order is 014 (planner), 015 (Notion queue), 016 (capture),
+017 (PDF attachments), then 018 (reporter). The historical-schema fixture
 constructs actual 001–015 DDL and proves canonical observations/Notion intents
-survive the additive reporter migration.
+survive the additive migration sequence.
 
 Offline tests invoke a strict synthetic gh process and the real service child,
 exercise signals, accepted-but-lost replies, remote readback, multiple workers,
-privacy, debounce, cadence, closed recurrence, backup/restore and Notion settlement.
-No production GitHub issue was created by these tests. A real GitHub test and the
-timeline/capture producer integration remain separate acceptance work. Ordinary
+privacy, debounce, cadence, closed recurrence, backup/restore and actual producer
+settlements. Producer regressions cover transaction rollback, typed configuration
+and rate-limit gaps, private watchlist boundaries, class-matched recovery and PDF
+byte-proof requirements. No production GitHub issue was created by these tests.
+A real GitHub test remains separate acceptance work. Ordinary
 configured production incidents are already authorized and do not need a
 per-failure confirmation; a deliberately created live test is separately scoped.

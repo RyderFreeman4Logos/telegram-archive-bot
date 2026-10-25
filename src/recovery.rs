@@ -382,6 +382,9 @@ impl Store {
         tx.execute("UPDATE failure_reporting_state SET restore_through=(SELECT coalesce(max(id),0) FROM failure_incidents)", [])?;
         tx.execute("UPDATE failure_reports SET state='reconcile',uncertain=1,next_at=0,error='restored_uncertain' WHERE state!='idle'", [])?;
         tx.execute("UPDATE failure_report_attempts SET finished_at=?1,outcome='restored_reconcile' WHERE finished_at IS NULL", [now()])?;
+        tx.execute("UPDATE daily_capture_work SET state='retry',reason='restored_interrupted',next_at=0 WHERE state='collecting'",[])?;
+        tx.execute("UPDATE daily_capture_attempts SET state='interrupted',reason='restored_interrupted',finished_at=?1 WHERE finished_at IS NULL",[now()])?;
+        tx.execute("UPDATE daily_capture_lease SET source_id=NULL,generation=generation+1,lease_until=0 WHERE singleton=1",[])?;
         tx.execute("UPDATE jobs SET state='paused',lease_until=NULL,generation=generation+1,error='restored_paused' WHERE state IN ('queued','running','retryable','paused')",[])?;
         tx.execute("UPDATE delivery_attempts SET state='unknown',finished_at=?1,error='restored_uncertain' WHERE state='sending'",[now()])?;
         tx.execute("UPDATE outbox SET state='unknown',lease_until=NULL,error='restored_uncertain' WHERE state='sending'",[])?;

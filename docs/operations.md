@@ -133,7 +133,9 @@ acceptance. Keep a separate capability report and opt-in live evidence.
 `run` starts a real poller when `telegram.enabled` is true. With only
 `daily.enabled`, it runs the [bounded daily planner](daily-planner.md) without
 Telegram polling or delivery; this planner leaf reports the unavailable timeline
-provider explicitly. Before switching an existing bot, compare
+provider explicitly. With `daily.capture.enabled`, it can also run the
+[capture-only original hydration worker](daily-content-capture.md), consuming
+persisted discoveries without Telegram/model/translation/TTS work. Before switching an existing bot, compare
 an isolated offline replay, stop the old poller yourself, take a verified full
 backup, and record the cursor. Only one installation may poll a bot. The local
 service lock prevents duplicate instances using the same state directory; it
