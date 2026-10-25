@@ -22,6 +22,7 @@ fn fixture() -> Result<(tempfile::TempDir, Documents)> {
 }
 fn response(url: &str, mime: &str, bytes: &[u8]) -> Response {
     Response {
+        retry_after_seconds: None,
         submitted: url.parse().unwrap(),
         resolved: url.parse().unwrap(),
         redirects: vec![],

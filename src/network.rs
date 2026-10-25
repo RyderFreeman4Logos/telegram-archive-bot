@@ -63,6 +63,7 @@ pub struct Response {
     pub content_type: String,
     pub charset: Option<String>,
     pub bytes: Vec<u8>,
+    pub retry_after_seconds: Option<u64>,
 }
 
 #[derive(Clone, Default)]
@@ -224,6 +225,11 @@ impl PublicHttp {
                 .next()
                 .unwrap_or("")
                 .to_ascii_lowercase();
+            let retry_after_seconds = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u64>().ok());
             let mut stream = response.bytes_stream();
             let mut bytes = vec![];
             while let Some(chunk) = stream.next().await {
@@ -241,6 +247,7 @@ impl PublicHttp {
                 content_type,
                 charset,
                 bytes,
+                retry_after_seconds,
             });
         }
     }

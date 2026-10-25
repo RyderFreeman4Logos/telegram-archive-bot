@@ -40,7 +40,7 @@ mod browser_tests {
             ("https://example.org/articles/page", format!("<html><body><article><h1>Article</h1><p>{}</p><a href='../references'>Reference</a><img src='../figure.png'></article></body></html>", "Useful article prose. ".repeat(80)), false),
             ("https://threadreaderapp.com/thread/123.html", "<html><body><div class='threadreader-content'><p>Thread-only body.</p></div><aside>Unrelated sidebar.</aside></body></html>".into(), true),
         ] {
-            let initial = adapter.response(Response {submitted:url.parse()?,resolved:url.parse()?,redirects:vec![],status:200,content_type:"text/html".into(),charset:None,bytes:b"<html><body></body></html>".to_vec()},&cancel).await?;
+            let initial = adapter.response(Response {retry_after_seconds:None,submitted:url.parse()?,resolved:url.parse()?,redirects:vec![],status:200,content_type:"text/html".into(),charset:None,bytes:b"<html><body></body></html>".to_vec()},&cancel).await?;
             let result = adapter.finish_browser_attempt(url,initial,Ok((html.into_bytes(),json!({}))),&cancel).await?;
             let body=&result.capture.content.as_ref().unwrap().body;
             if thread {
@@ -152,6 +152,7 @@ mod browser_tests {
         let initial = adapter
             .response(
                 Response {
+                    retry_after_seconds: None,
                     submitted: url.parse()?,
                     resolved: url.parse()?,
                     redirects: vec![],

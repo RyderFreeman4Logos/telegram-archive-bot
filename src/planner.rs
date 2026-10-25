@@ -13,6 +13,9 @@ use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+// Two 16 KiB opaque cursors can each expand sixfold in JSON, plus 512 cursor hashes.
+const MAX_CURSOR_BYTES: usize = 256 * 1024;
+
 pub fn account_identity(watch: &WatchAccount) -> AccountIdentity {
     match &watch.user_id {
         Some(id) => AccountIdentity::ProviderId {
@@ -433,6 +436,10 @@ impl Store {
                 [id],
             )?;
         }
+        if config.daily.provider.kind != crate::config::DailyProviderKind::Disabled {
+            tx.commit()?;
+            return Ok(result);
+        }
         let ids=tx.prepare("SELECT id FROM daily_windows WHERE (state IN ('planned','partial') OR (state='collecting' AND lease_until<=?1) OR (state='open_current_day' AND (utc_end<=?1 OR reason IS NULL OR reason!='timeline_provider_not_installed'))) AND account_id IN (SELECT account_id FROM daily_watch_bindings WHERE enabled=1) ORDER BY utc_start,id LIMIT ?2")?.query_map(params![now,config.daily.max_windows_per_tick],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
         for id in ids {
             let value = window(&tx, &id, now)?;
@@ -551,7 +558,7 @@ impl Store {
         now: i64,
     ) -> Result<()> {
         ensure!(
-            !cursor.is_empty() && cursor.len() <= 65536,
+            !cursor.is_empty() && cursor.len() <= MAX_CURSOR_BYTES,
             "invalid daily cursor"
         );
         let raw = serde_json::to_string(evidence)?;
@@ -661,6 +668,15 @@ impl Store {
         progress: DailyProgress,
         now: i64,
     ) -> Result<()> {
+        self.finish_daily_window_after(lease, progress, now, None)
+    }
+    pub(crate) fn finish_daily_window_after(
+        &self,
+        lease: &DailyLease,
+        progress: DailyProgress,
+        now: i64,
+        retry_after_seconds: Option<u64>,
+    ) -> Result<()> {
         ensure!(
             matches!(
                 progress.state,
@@ -676,7 +692,7 @@ impl Store {
             progress
                 .cursor
                 .as_ref()
-                .is_none_or(|s| !s.is_empty() && s.len() <= 65536),
+                .is_none_or(|s| !s.is_empty() && s.len() <= MAX_CURSOR_BYTES),
             "invalid daily cursor"
         );
         ensure!(
@@ -724,7 +740,7 @@ impl Store {
             reason = Some("attempt_budget_exhausted".into());
         }
         tx.execute("UPDATE daily_attempts SET state=?3,finished_at=?4,cursor=?5,evidence=?6 WHERE window_id=?1 AND attempt=?2",params![lease.window.plan.id,lease.window.attempts,state.as_str(),now,progress.cursor,evidence])?;
-        tx.execute("UPDATE daily_windows SET state=?2,cursor=?3,reason=?4,lease_until=NULL,failures=CASE WHEN ?5 THEN failures+1 ELSE 0 END,next_attempt_at=?6 WHERE id=?1",params![lease.window.plan.id,state.as_str(),progress.cursor,reason,failed,now.saturating_add(lease.config.daily.interval_seconds as i64)])?;
+        tx.execute("UPDATE daily_windows SET state=?2,cursor=?3,reason=?4,lease_until=NULL,failures=CASE WHEN ?5 THEN failures+1 ELSE 0 END,next_attempt_at=?6 WHERE id=?1",params![lease.window.plan.id,state.as_str(),progress.cursor,reason,failed,now.saturating_add(lease.config.daily.interval_seconds.max(retry_after_seconds.unwrap_or(0).min(86400)) as i64)])?;
         tx.commit()?;
         Ok(())
     }
