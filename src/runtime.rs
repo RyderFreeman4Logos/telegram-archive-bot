@@ -801,6 +801,12 @@ pub async fn serve(path: PathBuf, shutdown: CancellationToken) -> Result<()> {
             Ok::<_,anyhow::Error>(())
         });
     }
+    workers.spawn(crate::daily_capture::run_with(
+        store.clone(),
+        config.clone(),
+        Arc::new(crate::daily_capture::ConfiguredCollector),
+        shutdown.clone(),
+    ));
     {
         let store = store.clone();
         let config = config.clone();
@@ -816,6 +822,7 @@ pub async fn serve(path: PathBuf, shutdown: CancellationToken) -> Result<()> {
             Ok::<_,anyhow::Error>(())
         });
     }
+
     let mut hup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
     let mut interval = tokio::time::interval(Duration::from_secs(60));
     crate::operator::log(

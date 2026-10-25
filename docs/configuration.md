@@ -34,6 +34,12 @@ remain stable across handle changes. Conflicting established identities reject
 a reload. This planner leaf does not install a timeline provider or validate a
 web session; planning/status never read its cookie/bearer references.
 
+The independently opt-in [`daily.capture` worker](daily-content-capture.md)
+hydrates committed activity sources with bounded context and documents. Its
+default is disabled; each collection cycle pins its configuration and retains
+previous revision associations. No user X account is needed for the existing
+FxEmbed known-ID fallback.
+
 The job supervisor owns retries: three attempts per phase, 1,700 seconds per LLM
 attempt, six hours total execution including retry backoff. Queue time precedes
 the absolute execution deadline. Other defaults are 300 seconds for downloads,

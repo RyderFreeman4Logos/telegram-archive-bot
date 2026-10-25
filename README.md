@@ -58,6 +58,9 @@ systemd deployment. `run` starts a live Telegram poller when Telegram is enabled
 build, installation and replay do not activate it. The opt-in
 [daily account/day planner](docs/daily-planner.md) also runs with Telegram and
 models disabled; timeline collection remains a separate DA03 adapter.
+[Daily original-content capture](docs/daily-content-capture.md) hydrates persisted
+activities autonomously, retaining bounded context and external documents without
+creating model or delivery jobs.
 Required real-provider and client
 acceptance remain separately recorded in F20.
 

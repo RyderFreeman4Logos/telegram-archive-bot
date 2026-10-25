@@ -36,6 +36,10 @@ enum Command {
     },
     /// Retry one failed/blocked daily window, preserving cursor and history.
     DailyRetry { window_id: String },
+    /// Inspect capture-only queue outcomes without source URLs or credentials.
+    DailyCaptureStatus,
+    /// Retry one failed capture by source digest, preserving committed nodes.
+    DailyCaptureRetry { source_id: String },
     /// Inspect local tools, integrity and capabilities; never sends network requests.
     Doctor,
     /// Print local queue, retention, cache and projection metrics.
@@ -316,6 +320,16 @@ fn main() -> anyhow::Result<()> {
                         serde_json::json!({"id":id,"scheduled":"known_no_effect_retry"})
                     );
                 }
+                Command::DailyCaptureStatus => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&store.activity_capture_status()?)?
+                ),
+                Command::DailyCaptureRetry { source_id } => println!(
+                    "{}",
+                    serde_json::to_string_pretty(
+                        &store.retry_activity_capture(&config, &source_id)?
+                    )?
+                ),
                 Command::Init => println!(
                     "initialized schema {}",
                     telegram_archive_bot::storage::SCHEMA_VERSION

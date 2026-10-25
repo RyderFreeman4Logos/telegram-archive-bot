@@ -14,9 +14,11 @@ pub(crate) fn log(kind: &str, lease: Option<&crate::jobs::Lease>, detail: Value)
 pub fn metrics(store: &Store) -> Result<Value> {
     let conn = store.connection()?;
     let mut counts = BTreeMap::new();
-    for table in ["jobs", "outbox", "daily_windows"] {
+    for table in ["jobs", "outbox", "daily_windows", "daily_capture_work"] {
         let state = if table == "jobs" {
             "CASE WHEN state='complete' AND partial=1 THEN 'partial' ELSE state END"
+        } else if table == "daily_capture_work" {
+            "CASE WHEN state='complete' AND json_extract(result,'$.partial')=1 THEN 'partial' ELSE state END"
         } else {
             "state"
         };
