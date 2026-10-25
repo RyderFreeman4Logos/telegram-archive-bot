@@ -163,6 +163,19 @@ impl Fixture {
             serde_json::to_string(&self.store.notion_list(100)?)?
         )
     }
+    async fn lock(&self) -> Result<std::fs::File> {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            if let Some(guard) = self.store.notion_lock()? {
+                return Ok(guard);
+            }
+            anyhow::ensure!(
+                tokio::time::Instant::now() < deadline,
+                "fixture lock admission timed out"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
     async fn operator(&self, action: impl Fn() -> Result<()>) -> Result<()> {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
@@ -351,7 +364,7 @@ async fn completed_proof_is_revoked_on_missing_file_and_operator_reconcile_is_re
         .lines()
         .count();
     f.mode("missing_attachment");
-    let guard = f.store.notion_lock()?.expect("uncontended control");
+    let guard = f.lock().await?;
     let release = tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         drop(guard);
@@ -546,7 +559,7 @@ async fn auth_gap_can_resume_explicitly_but_unknown_append_cannot_be_retried() -
 #[tokio::test]
 async fn fixture_work_budget_waits_for_contended_worker_lock() -> Result<()> {
     let fixture = Fixture::new("normal").await?;
-    let guard = fixture.store.notion_lock()?.expect("uncontended control");
+    let guard = fixture.lock().await?;
     assert!(!fixture.tick().await?, "busy worker must not dispatch");
     let release = tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
