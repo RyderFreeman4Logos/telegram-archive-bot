@@ -209,6 +209,16 @@ impl From<Failure> for PublicationError {
     }
 }
 
+// Local structured stderr/journal only. Callers supply fixed tags and counts,
+// never provider text, identifiers, arguments, paths, or ToolReport contents.
+fn log_limit(reason: &'static str, scope: &'static str, counts: &[(&'static str, u64)]) {
+    let mut detail = json!({"reason":reason,"scope":scope});
+    for (name, value) in counts {
+        detail[*name] = json!(value);
+    }
+    crate::operator::log("notion_limit", None, detail);
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerifiedPage {
     pub page_id: String,
@@ -262,7 +272,7 @@ impl RecordData {
 }
 
 impl Record {
-    /// Pure, deterministic planning. This does not resolve credentials or invoke ntn.
+    /// Deterministic planning without credentials or ntn; refused bounds emit a local count-only log.
     pub fn plan(&self, config: &Notion) -> Result<PublicationPlan, PublicationError> {
         if self.schema_version != SCHEMA_VERSION
             || self.id.is_empty()
@@ -290,6 +300,14 @@ impl Record {
         config.validate().map_err(|_| Failure::InvalidPayload)?;
         let serialized = serde_json::to_vec(self).map_err(|_| Failure::InvalidPayload)?;
         if serialized.len() > config.record_bytes {
+            log_limit(
+                "payload",
+                "record_bytes",
+                &[
+                    ("bytes", serialized.len() as u64),
+                    ("limit", config.record_bytes as u64),
+                ],
+            );
             return Err(Failure::Limit.into());
         }
         let publication_key = crate::digest(
@@ -367,6 +385,14 @@ impl Record {
             "Human annotations and downstream analysis (unmanaged)",
         ));
         if blocks.len() > config.max_blocks {
+            log_limit(
+                "payload",
+                "record_blocks",
+                &[
+                    ("blocks", blocks.len() as u64),
+                    ("limit", config.max_blocks as u64),
+                ],
+            );
             return Err(Failure::Limit.into());
         }
         let canonical_digest =
@@ -427,8 +453,20 @@ fn escape_json_controls(value: String, limit: usize) -> Result<String, Publicati
         .try_fold(0usize, |bytes, ch| {
             bytes.checked_add(if unsafe_control(ch) { 6 } else { ch.len_utf8() })
         })
-        .ok_or(Failure::Limit)?;
+        .ok_or_else(|| {
+            log_limit(
+                "payload",
+                "encoded_bytes_overflow",
+                &[("limit", limit as u64)],
+            );
+            Failure::Limit
+        })?;
     if bytes > limit {
+        log_limit(
+            "payload",
+            "encoded_bytes",
+            &[("bytes", bytes as u64), ("limit", limit as u64)],
+        );
         return Err(Failure::Limit.into());
     }
     if bytes == value.len() {

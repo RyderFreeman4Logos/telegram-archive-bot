@@ -743,9 +743,35 @@ async fn reader_observes_actual_pdf_recovery_with_exact_observation_pin() -> Res
         "verified"
     );
     f.mode("missing_attachment");
+    // Waiting for a delayed PDF attempt does not drain the immediate lane.
+    // The reader added two older account/activity intents and immutable documents
+    // that may share the PDF's creation second. Budget the actual bounded queue,
+    // rather than assuming those documents sort before or after the PDF.
+    let queued = f.store.notion_list(100)?;
+    assert!(
+        queued.len() < 100,
+        "fixture work inventory must not be truncated"
+    );
+    let context_intents = queued
+        .iter()
+        .filter(|row| {
+            matches!(row["kind"].as_str(), Some("account" | "activity")) && row["attempts"] == 0
+        })
+        .count();
+    assert_eq!(
+        context_intents, 2,
+        "fixture must account for its exact preceding work"
+    );
+    let preceding = queued
+        .iter()
+        .filter(|row| {
+            row["kind"] != "pdf_attachment"
+                && !matches!(row["state"].as_str(), Some("complete" | "conflict"))
+        })
+        .count();
     f.store
         .reconcile_notion(f.status()["queue_id"].as_str().unwrap(), None)?;
-    f.drain(2).await?;
+    f.drain(preceding + 1).await?;
     let revoked = settle()?;
     let revoked = &revoked.activities[0].sources[0]
         .enrichment
