@@ -1,13 +1,17 @@
 # Release candidate verification
 
-Current target: **0.1.0-rc.5**. This candidate contains the due-recovery fairness
-fix (#98) and empty revision-title fallback (#99), with an index-only schema-20
-upgrade. The final combined source review, eight-command canonical gate, hosted
+Current target: **0.1.0-rc.5**. This candidate contains persistent admission turns
+for immediate and delayed Notion work (#98/#102), the empty revision-title
+fallback (#99), and private limit diagnostics (#101). Schema 21 adds an empty
+operational admission cursor and retires the intermediate creation-order index.
+The final combined source review, eight-command canonical gate, hosted
 CI, Cargo installation, verified-backup activation and public download checks
 remain pending at this source freeze. See [RC5 notes](../release-notes-0.1.0-rc.5.md)
 and the [versioned release verification assets](https://github.com/RyderFreeman4Logos/telegram-archive-bot/releases/tag/v0.1.0-rc.5)
-for the later source-bound outcomes. Historical RC4 receipts do not transfer to
-RC5; client/provider tracks #41/#92/#94/#97 remain separate.
+for the later source-bound outcomes. Historical RC4 and earlier RC5 schema-20
+receipts do not transfer to this candidate. Actual recovery of the original
+Notion intents and the limit reason require separate runtime evidence;
+client/provider tracks #41/#92/#94/#97 remain separate.
 
 ## Historical RC4 preparation
 
