@@ -67,6 +67,27 @@ if path == "v1/pages" and method == "POST":
         print(json.dumps(summary(page)))
 elif path == "v1/search":
     assert method == "POST" and body["filter"] == {"property":"object", "value":"page"}
+    if mode == "search_pages":
+        cursor = body.get("start_cursor", "PRIVATE_CURSOR_0")
+        number = int(cursor.rsplit("_", 1)[1]) + 1
+        # A valid nonmatching page forces real pagination without granting a create.
+        print(json.dumps({"object":"list", "results":[{"object":"page", "id":str(uuid.UUID(int=999)), "parent":{"page_id":"11111111-1111-1111-1111-111111111111"}, "properties":{"title":{"title":[{"text":{"content":"PRIVATE_SEARCH_TITLE"}}]}}}], "has_more":True, "next_cursor":f"PRIVATE_CURSOR_{number}"}))
+        sys.exit(0)
+    if mode in ("search_stdout_limit", "search_stderr_limit", "search_auth_overflow"):
+        if mode == "search_stdout_limit":
+            print("PRIVATE_RESPONSE " * 2000, flush=True)
+        else:
+            print(json.dumps({"object":"error", "status":401, "message":"PRIVATE_RESPONSE"}) if mode == "search_auth_overflow" else "{}", flush=True)
+            print("PRIVATE_RESPONSE " * 2000, file=sys.stderr, flush=True)
+        time.sleep(0.2)
+        sys.exit(1)
+    if mode == "search_work_limit":
+        # Each file stays below RLIMIT_FSIZE; their sum exceeds the workspace cap.
+        for name in ("PRIVATE_WORK_FILE_A", "PRIVATE_WORK_FILE_B"):
+            with open(name, "wb") as f:
+                f.truncate(8_000_001)
+        time.sleep(0.2)
+        sys.exit(0)
     pages = [summary(p) for p in state["pages"].values() if any(body["query"] in t["text"]["content"] for v in p["properties"].values() for t in v.get("title", []))]
     print(json.dumps({"object":"list", "results":[] if mode == "empty_search" else pages, "has_more":False, "next_cursor":None}))
 elif path.startswith("v1/pages/"):

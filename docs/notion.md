@@ -204,6 +204,17 @@ only remote reconciliation can establish availability; regenerating metadata
 that differs from an older publication yields a conflict, never a blind recreate.
 Raw source evidence remains in canonical SQLite/CAS; Notion is a separate sink.
 
+For publication limit failures (#101), local structured stderr/journal events named
+`notion_limit` retain a fixed `reason` (`request_budget`, `deadline`,
+`tool_stdout_or_stderr`, `tool_workdir`, or `payload`), a fixed boundary `scope`,
+and numeric counts or configured limits. `requests_used` includes the initial
+`ntn --version` invocation. Output byte limits are caps, not measured wire sizes.
+No body, query, cursor, credential, source URL, record/page identity, filesystem
+path, or tool output is logged. Parsed remote errors retain their existing
+precedence; an uncertain write still requires reconciliation. These diagnostics
+use local log retention, not durable failure-event records or backup/Git recovery,
+and do not increase budgets, issue extra requests, or authorize another create.
+
 Offline acceptance uses real SQLite transactions, public CLI `run`/`replay`, real
 signals, fake ntn child processes, backup and committed Git roundtrips. It covers
 missing prerequisites followed by automatic drain, disabled zero calls, target

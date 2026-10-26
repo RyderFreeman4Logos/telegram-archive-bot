@@ -67,6 +67,259 @@ fn replay(root: &Path, config: &Path, id: i64) {
     cli(config, &["replay", path.to_str().unwrap()]);
 }
 
+// #101: assert the actual service's private log after durable settlement, so the
+// baseline fails for a missing diagnostic rather than waiting for that new log.
+fn limit_service_case(mode: &str, expected_reason: Option<&str>) {
+    use telegram_archive_bot::{
+        notion::{Provenance, Record, RecordData},
+        sources::FetchStatus,
+    };
+    let root = tempfile::Builder::new()
+        .permissions(Permissions::from_mode(0o700))
+        .tempdir()
+        .unwrap();
+    let executable = root.path().join("ntn.py");
+    std::fs::write(&executable, include_str!("fixtures/fake_ntn_worker.py")).unwrap();
+    std::fs::set_permissions(&executable, Permissions::from_mode(0o700)).unwrap();
+    let token = root.path().join("token");
+    std::fs::write(&token, "SYNTHETIC_NOTION_WORKER_TOKEN").unwrap();
+    std::fs::set_permissions(&token, Permissions::from_mode(0o600)).unwrap();
+    let mut config = Config {
+        state_dir: root.path().join("store"),
+        ..Config::default()
+    };
+    config.telegram.enabled = false;
+    config.daily.enabled = false;
+    config.daily.capture.enabled = false;
+    config.failure_reporting.enabled = false;
+    config.model.enabled = false;
+    config.translation.enabled = false;
+    config.synthesis.enabled = false;
+    config.notion.executable = Some(executable);
+    config.notion.token = Some(SecretRef::File(token));
+    config.notion.destination = Some(NotionDestination::Page {
+        id: "11111111-1111-1111-1111-111111111111".into(),
+    });
+    config.notion.retry_seconds = 3600;
+    for path in [
+        &mut config.tools.ffmpeg,
+        &mut config.tools.ffprobe,
+        &mut config.tools.yt_dlp,
+        &mut config.tools.md2audio,
+        &mut config.tools.pdfinfo,
+        &mut config.tools.pdftotext,
+        &mut config.tools.git,
+        &mut config.tools.hymt_bridge,
+        &mut config.tools.bubblewrap,
+        &mut config.tools.browser,
+    ] {
+        *path = "/nonexistent/issue101-fixture".into();
+    }
+    let store = Store::open(&config.state_dir).unwrap();
+    store
+        .record_notion_document(&Record {
+            schema_version: 1,
+            id: "PRIVATE_RECORD_ID".into(),
+            title: "PRIVATE_TITLE".into(),
+            captured_at: "2026-10-26T00:00:00Z".into(),
+            original_urls: vec!["https://example.org/PRIVATE_SOURCE_URI".into()],
+            provenance: Provenance {
+                provider: "fixture".into(),
+                extractor: "synthetic-v1".into(),
+                retrieved_at: "2026-10-26T00:00:00Z".into(),
+                completeness: FetchStatus::Complete,
+                original_bytes_sha256: None,
+            },
+            data: RecordData::AgentOutput {
+                manifest_id: "PRIVATE_MANIFEST".into(),
+                sop_version: "PRIVATE_SOP".into(),
+                level: 1,
+                sources: vec![],
+            },
+            content: "PRIVATE_CAPTURED_BODY".into(),
+        })
+        .unwrap();
+    let conn = rusqlite::Connection::open(config.state_dir.join("archive.sqlite")).unwrap();
+    let id: String = conn
+        .query_row("SELECT id FROM notion_queue", [], |r| r.get(0))
+        .unwrap();
+    let config_path = root.path().join("config.toml");
+    let launch = |log_path: &Path| {
+        Service(
+            Command::new(env!("CARGO_BIN_EXE_telegram-archive-bot"))
+                .arg("--config")
+                .arg(&config_path)
+                .arg("run")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(std::fs::File::create(log_path).unwrap())
+                .process_group(0)
+                .spawn()
+                .unwrap(),
+        )
+    };
+    let settled = |attempt: i64| {
+        conn.query_row(
+        "SELECT count(*) FROM notion_attempts WHERE queue_id=?1 AND number=?2 AND finished_at IS NOT NULL",
+        rusqlite::params![id, attempt], |r| r.get::<_, i64>(0),
+    ).unwrap() == 1
+    };
+    std::fs::write(root.path().join("mode"), "accepted_lost").unwrap();
+    write_config(&config_path, &config);
+    let seed_log = root.path().join("seed.log");
+    let mut service = launch(&seed_log);
+    wait(|| {
+        assert!(
+            service.0.try_wait().unwrap().is_none(),
+            "{}",
+            std::fs::read_to_string(&seed_log).unwrap()
+        );
+        settled(1)
+    });
+    signal(&service, libc::SIGTERM);
+    wait(|| service.0.try_wait().unwrap().is_some());
+    assert!(service.0.wait().unwrap().success());
+    let calls = || {
+        std::fs::read_to_string(root.path().join("calls"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Vec<String>>(line).unwrap())
+            .collect::<Vec<_>>()
+    };
+    let before_calls = calls();
+    let create_count = |calls: &[Vec<String>]| {
+        calls
+            .iter()
+            .filter(|a| a.get(1).is_some_and(|p| p == "v1/pages") && a.iter().any(|v| v == "POST"))
+            .count()
+    };
+    assert_eq!(create_count(&before_calls), 1);
+    store.reconcile_notion(&id, None).unwrap();
+    config.notion.max_requests = 4;
+    config.notion.response_bytes = 16384;
+    std::fs::write(root.path().join("mode"), mode).unwrap();
+    write_config(&config_path, &config);
+    let log_path = root.path().join("diagnostic.log");
+    service = launch(&log_path);
+    wait(|| {
+        assert!(
+            service.0.try_wait().unwrap().is_none(),
+            "{}",
+            std::fs::read_to_string(&log_path).unwrap()
+        );
+        settled(2)
+    });
+    signal(&service, libc::SIGTERM);
+    wait(|| service.0.try_wait().unwrap().is_some());
+    assert!(service.0.wait().unwrap().success());
+    let (state, may_remote, creates, error): (String, bool, i64, String) = conn
+        .query_row(
+            "SELECT state,may_have_remote,create_attempts,error FROM notion_queue WHERE id=?1",
+            [&id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert!(may_remote);
+    assert_eq!(creates, 1);
+    assert_eq!(
+        (state.as_str(), error.as_str()),
+        if expected_reason.is_some() {
+            ("reconcile", "limit")
+        } else {
+            ("blocked_auth", "blocked_auth")
+        }
+    );
+    let after_calls = calls();
+    assert_eq!(
+        create_count(&after_calls),
+        1,
+        "unknown create must never be retried"
+    );
+    let new_calls = &after_calls[before_calls.len()..];
+    assert_eq!(
+        new_calls
+            .iter()
+            .filter(|a| a.as_slice() == ["--version"])
+            .count(),
+        1
+    );
+    assert_eq!(
+        new_calls
+            .iter()
+            .filter(|a| a.get(1).is_some_and(|p| p == "v1/search"))
+            .count(),
+        if mode == "search_pages" { 3 } else { 1 }
+    );
+    assert_eq!(new_calls.len(), if mode == "search_pages" { 4 } else { 2 });
+    let logs: Vec<Value> = std::fs::read_to_string(&log_path)
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|v| v["event"] == "notion_limit")
+        .collect();
+    let Some(reason) = expected_reason else {
+        assert!(
+            logs.is_empty(),
+            "parsed remote auth error must retain precedence"
+        );
+        return;
+    };
+    assert_eq!(
+        logs.len(),
+        1,
+        "settled real limit must emit one private reason"
+    );
+    let detail = &logs[0]["detail"];
+    assert_eq!(detail["reason"], reason);
+    assert_eq!(
+        detail["requests_used"],
+        if mode == "search_pages" { 4 } else { 2 }
+    );
+    assert_eq!(detail["max_requests"], 4);
+    let serialized = serde_json::to_string(&logs).unwrap();
+    for forbidden in [
+        "PRIVATE_",
+        "SYNTHETIC_NOTION_WORKER_TOKEN",
+        "https://",
+        "query",
+        "cursor",
+        "page_id",
+        "record_id",
+        root.path().to_str().unwrap(),
+        &id,
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "private diagnostic leaked {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn issue101_request_budget_limit_is_private_and_keeps_unknown_create() {
+    limit_service_case("search_pages", Some("request_budget"));
+}
+
+#[test]
+fn issue101_stdout_limit_is_private() {
+    limit_service_case("search_stdout_limit", Some("tool_stdout_or_stderr"));
+}
+
+#[test]
+fn issue101_stderr_limit_is_private() {
+    limit_service_case("search_stderr_limit", Some("tool_stdout_or_stderr"));
+}
+
+#[test]
+fn issue101_work_limit_is_private() {
+    limit_service_case("search_work_limit", Some("tool_workdir"));
+}
+
+#[test]
+fn issue101_remote_auth_error_precedes_tool_limit() {
+    limit_service_case("search_auth_overflow", None);
+}
+
 #[test]
 fn headless_service_drains_on_readiness_change_without_sync_and_keeps_destination_pins() {
     let root = tempfile::Builder::new()

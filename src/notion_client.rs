@@ -101,6 +101,30 @@ impl<'a> Operation<'a> {
         })
     }
 
+    fn limit_diagnostic(
+        &self,
+        reason: &'static str,
+        scope: &'static str,
+        counts: &[(&'static str, u64)],
+    ) {
+        let mut values = vec![
+            ("requests_used", self.requests as u64),
+            ("max_requests", self.adapter.config.max_requests as u64),
+            ("operation_seconds", self.adapter.config.operation_seconds),
+            (
+                "remaining_ms",
+                self.deadline
+                    .saturating_duration_since(Instant::now())
+                    .as_millis() as u64,
+            ),
+            ("stdout_limit", self.adapter.config.response_bytes as u64),
+            ("stderr_limit", 16384),
+            ("work_limit", self.work_bytes),
+        ];
+        values.extend_from_slice(counts);
+        log_limit(reason, scope, &values);
+    }
+
     fn remote_error(&self, value: &Value) -> Option<PublicationError> {
         if value.get("object").and_then(Value::as_str) != Some("error") {
             return None;
@@ -162,7 +186,14 @@ impl<'a> Operation<'a> {
                 self.error(Failure::PendingConfiguration)
             }
             ToolFailure::Cancelled => self.uncertain(Failure::Cancelled),
-            ToolFailure::LogLimit | ToolFailure::WorkLimit => self.uncertain(Failure::Limit),
+            ToolFailure::LogLimit => {
+                self.limit_diagnostic("tool_stdout_or_stderr", "tool", &[]);
+                self.uncertain(Failure::Limit)
+            }
+            ToolFailure::WorkLimit => {
+                self.limit_diagnostic("tool_workdir", "tool", &[]);
+                self.uncertain(Failure::Limit)
+            }
             _ => self.uncertain(Failure::Unavailable),
         }
     }
@@ -176,10 +207,12 @@ impl<'a> Operation<'a> {
             return Err(self.uncertain(Failure::Cancelled));
         }
         if self.requests >= self.adapter.config.max_requests {
+            self.limit_diagnostic("request_budget", "tool_admission", &[]);
             return Err(self.uncertain(Failure::Limit));
         }
         let remaining = self.deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
+            self.limit_diagnostic("deadline", "tool_admission", &[]);
             return Err(self.uncertain(Failure::Limit));
         }
         self.requests += 1;
@@ -238,6 +271,14 @@ impl<'a> Operation<'a> {
             let bytes =
                 serde_json::to_vec(body).map_err(|_| self.error(Failure::InvalidPayload))?;
             if bytes.len() > self.adapter.config.payload_bytes {
+                self.limit_diagnostic(
+                    "payload",
+                    "request_body",
+                    &[
+                        ("bytes", bytes.len() as u64),
+                        ("limit", self.adapter.config.payload_bytes as u64),
+                    ],
+                );
                 return Err(self.error(Failure::Limit));
             }
             if String::from_utf8_lossy(&bytes).contains(&self.token) {
@@ -504,11 +545,24 @@ fn requests(plan: &PublicationPlan, config: &Notion) -> Result<Vec<Value>, Publi
             next += 1;
         }
         if next == start {
+            log_limit(
+                "payload",
+                "request_block",
+                &[("limit", config.payload_bytes as u64)],
+            );
             return Err(Failure::Limit.into());
         }
         result.push(request);
     }
     if result.len() + 3 > config.max_requests {
+        log_limit(
+            "request_budget",
+            "create_request_plan",
+            &[
+                ("requests_needed", (result.len() + 3) as u64),
+                ("max_requests", config.max_requests as u64),
+            ],
+        );
         return Err(Failure::Limit.into());
     }
     Ok(result)
@@ -665,4 +719,132 @@ pub(super) async fn find(
     };
     operation.page_id = Some(page.clone());
     operation.readback(&page, &plan).await.map(Some)
+}
+
+#[cfg(test)]
+mod limit_tests {
+    use super::*;
+
+    #[test]
+    fn issue101_local_guards_log_without_dispatch() {
+        const CHILD: &str = "ARCHIVE_ISSUE101_LOCAL_GUARDS";
+        if std::env::var_os(CHILD).is_some() {
+            let root = tempfile::Builder::new()
+                .permissions(std::fs::Permissions::from_mode(0o700))
+                .tempdir()
+                .unwrap();
+            let config = Notion {
+                executable: Some("/nonexistent/PRIVATE_EXECUTABLE".into()),
+                payload_bytes: 16384,
+                ..Notion::default()
+            };
+            let adapter = Adapter::new(&config, root.path());
+            let cancel = CancellationToken::new();
+            let observer = |_: &PublicationProgress| Ok(());
+            let mut op = Operation {
+                adapter: &adapter,
+                cancel: &cancel,
+                work: root,
+                token: "PRIVATE_TOKEN".into(),
+                deadline: Instant::now(),
+                requests: 3,
+                write_started: true,
+                page_id: None,
+                observer: &observer,
+                written_blocks: 0,
+                work_bytes: 16_000_000,
+            };
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                let error = op
+                    .tool(vec!["PRIVATE_ARGUMENT".into()], false)
+                    .await
+                    .unwrap_err();
+                assert_eq!(
+                    error.state,
+                    Failure::Reconcile,
+                    "expired operation retains uncertain-write classification"
+                );
+                let error = op
+                    .request(
+                        "v1/search",
+                        "POST",
+                        Some(&json!({"query":"PRIVATE_QUERY".repeat(2000)})),
+                        None,
+                    )
+                    .await
+                    .unwrap_err();
+                assert_eq!(error.state, Failure::Limit);
+            });
+            assert_eq!(op.requests, 3, "neither guard may dispatch a child");
+            assert!(std::fs::read_dir(op.work.path()).unwrap().next().is_none());
+            let record = Record {
+                schema_version: 1,
+                id: "PRIVATE_ID".into(),
+                title: "PRIVATE_TITLE".into(),
+                captured_at: "2026-10-26T00:00:00Z".into(),
+                original_urls: vec!["https://example.org/PRIVATE_URI".into()],
+                provenance: Provenance {
+                    provider: "fixture".into(),
+                    extractor: "fixture".into(),
+                    retrieved_at: "2026-10-26T00:00:00Z".into(),
+                    completeness: crate::sources::FetchStatus::Complete,
+                    original_bytes_sha256: None,
+                },
+                data: RecordData::Source {
+                    provider: "fixture".into(),
+                    external_id: "PRIVATE_ID".into(),
+                },
+                content: "PRIVATE_BODY".into(),
+            };
+            let mut limited = config.clone();
+            limited.record_bytes = 1;
+            assert_eq!(record.plan(&limited).unwrap_err().state, Failure::Limit);
+            limited.record_bytes = config.record_bytes;
+            limited.max_blocks = 1;
+            assert_eq!(record.plan(&limited).unwrap_err().state, Failure::Limit);
+            assert_eq!(
+                escape_json_controls("PRIVATE\u{2028}".into(), 1)
+                    .unwrap_err()
+                    .state,
+                Failure::Limit
+            );
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "notion::client::limit_tests::issue101_local_guards_log_without_dispatch",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+            "the exact child guard test must run"
+        );
+        let logs: Vec<Value> = String::from_utf8(output.stderr)
+            .unwrap()
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter(|value| value["event"] == "notion_limit")
+            .collect();
+        assert_eq!(
+            logs.len(),
+            5,
+            "real local guard failures need fixed private diagnostics"
+        );
+        assert_eq!(logs[0]["detail"]["reason"], "deadline");
+        assert_eq!(logs[0]["detail"]["requests_used"], 3);
+        for log in &logs[1..] {
+            assert_eq!(log["detail"]["reason"], "payload");
+        }
+        let encoded = serde_json::to_string(&logs).unwrap();
+        assert!(!encoded.contains("PRIVATE") && !encoded.contains("https://"));
+    }
 }
