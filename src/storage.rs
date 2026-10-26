@@ -11,7 +11,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-pub const SCHEMA_VERSION: u32 = 20;
+pub const SCHEMA_VERSION: u32 = 21;
 
 #[derive(Clone, Debug)]
 pub struct Store {
@@ -195,6 +195,11 @@ impl Store {
         }
         if version < 20 {
             tx.execute_batch(include_str!("../migrations/020_notion_fair_admission.sql"))?;
+        }
+        if version < 21 {
+            tx.execute_batch(include_str!(
+                "../migrations/021_notion_admission_cursor.sql"
+            ))?;
         }
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         tx.commit()?;

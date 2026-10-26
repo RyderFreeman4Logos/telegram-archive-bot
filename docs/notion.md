@@ -166,15 +166,21 @@ Known no-effect failures use bounded create attempts and retry delay. Unsupporte
 or missing prerequisites do not exhaust the create budget. Auth/rate errors and
 provider retry hints remain separate from ambiguous writes.
 
-Due work is selected by immutable creation time and ID within its destination
-(DA06 / #73, #98). `available_at` remains an eligibility bound: a future retry
-cannot run early, while a due reconciliation is not starved by newer rows with
-the initial `available_at=0`. A completed or deferred old intent lets other due
-work advance; repeated failures retain their retry delay. Schema 20 adds an
-active-queue creation-order index without changing canonical records, publication
-pins, attempts or conflicts. It retains the earlier due-time index and avoids a
-temporary sort of the active backlog. This does not guarantee a fixed completion
-time when remote requests fail or many older intents are due.
+Due work alternates admission turns between immediate (`available_at<=0`) and
+due delayed (`0<available_at<=now`) work within each destination (DA06 / #73,
+#98, #102). Each lane orders by `available_at,created_at,id`; an empty preferred
+lane falls back to the other. A persistent cursor switches after the actual
+selection, including work that later fails validation or is cancelled. Its
+transaction must commit before returning work; recovery hold and an empty queue
+leave it unchanged. Competing eligible lanes can bypass each other by at most
+one turn. This does not promise equal operation durations or a completion SLA.
+Future retries cannot run early, retry delay remains intact, and unknown writes
+still reconcile without another create. Schema 21 creates an initially empty
+operational cursor table without changing the 78 existing tables' values. It
+reuses the due-time index and drops schema 20's retired creation-order index;
+neither lane sorts the full active queue. Take and verify a full backup before
+migration. Full backups preserve cursors; semantic Git recovery starts them empty
+under its existing recovery hold, without claiming prior publication knowledge.
 
 `status` exposes `notion_publication` counts, oldest pending age, unbound count and
 remaining bootstrap namespaces. `doctor.notion` reports local prerequisites

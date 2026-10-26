@@ -836,6 +836,152 @@ async fn due_reconciliation_known_page_is_not_starved_by_fresh_backlog() {
     due_reconciliation_with_fresh_backlog(true).await;
 }
 
+// #102: a retry can be due again by the time another slow reconciliation ends.
+// Model those exact eligibility boundaries locally; no wall-clock/provider wait.
+#[cfg(feature = "ntn")]
+#[tokio::test]
+async fn two_repeated_due_reconciliations_cannot_starve_fresh_publication() {
+    let (root, store, mut config) = worker_fixture();
+    config.notion.retry_seconds = 3600;
+    store
+        .capture(&capture("100", "old unknown publications"))
+        .unwrap();
+    std::fs::write(root.path().join("mode"), "accepted_lost").unwrap();
+    drain_until(&store, &config, |m| m["states"]["reconcile"] == 2).await;
+    let db = rusqlite::Connection::open(config.state_dir.join("archive.sqlite")).unwrap();
+    let older: Vec<String> = db
+        .prepare("SELECT id FROM notion_queue ORDER BY id")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(older.len(), 2);
+    // Wait only for the real timestamp boundary before intake, rather than
+    // rewriting immutable queue timestamps or depending on lexical tie order.
+    let old_time: i64 = db
+        .query_row("SELECT max(created_at) FROM notion_queue", [], |r| r.get(0))
+        .unwrap();
+    let boundary_deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while db
+        .query_row("SELECT unixepoch()", [], |r| r.get::<_, i64>(0))
+        .unwrap()
+        <= old_time
+    {
+        assert!(
+            std::time::Instant::now() < boundary_deadline,
+            "fixture intake timestamp boundary did not advance"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    store
+        .capture(&capture("200", "fresh immutable body"))
+        .unwrap();
+    std::fs::write(root.path().join("mode"), "empty_search").unwrap();
+    let mut previous: Option<String> = None;
+    let mut admissions = Vec::new();
+    for _ in 0..4 {
+        let now: i64 = db
+            .query_row("SELECT unixepoch()", [], |r| r.get(0))
+            .unwrap();
+        // The previous item is backing off. The other old item is already due,
+        // just as when its 30s retry elapsed during the previous 140s operation.
+        for id in &older {
+            db.execute(
+                "UPDATE notion_queue SET available_at=?1 WHERE id=?2",
+                rusqlite::params![
+                    if previous.as_ref() == Some(id) {
+                        now + 3600
+                    } else {
+                        now - 1
+                    },
+                    id
+                ],
+            )
+            .unwrap();
+        }
+        let before: Vec<i64> = older
+            .iter()
+            .map(|id| {
+                db.query_row("SELECT attempts FROM notion_queue WHERE id=?1", [id], |r| {
+                    r.get(0)
+                })
+                .unwrap()
+            })
+            .collect();
+        let total: i64 = db
+            .query_row("SELECT sum(attempts) FROM notion_queue", [], |r| r.get(0))
+            .unwrap();
+        drain_until(&store, &config, |_| {
+            db.query_row("SELECT sum(attempts) FROM notion_queue", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap()
+                > total
+        })
+        .await;
+        let fresh: i64 = db
+            .query_row(
+                "SELECT count(*) FROM notion_queue WHERE id NOT IN (?1,?2) AND attempts>0",
+                rusqlite::params![older[0], older[1]],
+                |r| r.get(0),
+            )
+            .unwrap();
+        if fresh > 0 {
+            admissions.push("fresh".to_owned());
+            break;
+        }
+        let advanced = older
+            .iter()
+            .enumerate()
+            .find(|(i, id)| {
+                db.query_row("SELECT attempts FROM notion_queue WHERE id=?1", [id], |r| {
+                    r.get::<_, i64>(0)
+                })
+                .unwrap()
+                    > before[*i]
+            })
+            .expect("one exact durable attempt must advance");
+        previous = Some(advanced.1.clone());
+        admissions.push(format!("old-{}", advanced.0));
+    }
+    let fresh: i64 = db
+        .query_row(
+            "SELECT count(*) FROM notion_queue WHERE id NOT IN (?1,?2) AND state='complete'",
+            rusqlite::params![older[0], older[1]],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        fresh, 1,
+        "repeated due recovery must share bounded turns with fresh work; admissions={admissions:?}"
+    );
+    for id in &older {
+        let (unknown, creates, state): (bool, i64, String) = db
+            .query_row(
+                "SELECT may_have_remote,create_attempts,state FROM notion_queue WHERE id=?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert!(unknown);
+        assert_eq!(creates, 1, "unknown pages must never be created again");
+        assert_eq!(state, "reconcile");
+    }
+    let calls = std::fs::read_to_string(root.path().join("calls")).unwrap();
+    let creates = calls
+        .lines()
+        .filter(|line| {
+            let args: Vec<String> = serde_json::from_str(line).unwrap();
+            args.get(1).is_some_and(|path| path == "v1/pages")
+        })
+        .count();
+    assert_eq!(
+        creates, 3,
+        "only two original ambiguous pages and one fresh page may be created"
+    );
+}
+
 #[cfg(feature = "ntn")]
 #[tokio::test]
 async fn known_page_and_progress_survive_cancellation_before_readback() {
@@ -1386,8 +1532,12 @@ fn queue_tick_query_plans_exclude_historical_work_and_temporary_sorts() {
             "notion_queue_due",
         ),
         (
-            "SELECT id FROM notion_queue INDEXED BY notion_queue_due_created WHERE destination_key='fixture' AND state NOT IN ('complete','conflict','creating') AND available_at<=1 AND (may_have_remote=1 OR create_attempts<3) ORDER BY created_at,id LIMIT 1",
-            "notion_queue_due_created",
+            "SELECT id FROM notion_queue INDEXED BY notion_queue_due WHERE destination_key='fixture' AND state NOT IN ('complete','conflict','creating') AND available_at<=0 AND available_at<=1 AND (may_have_remote=1 OR create_attempts<3) ORDER BY available_at,created_at,id LIMIT 1",
+            "notion_queue_due",
+        ),
+        (
+            "SELECT id FROM notion_queue INDEXED BY notion_queue_due WHERE destination_key='fixture' AND state NOT IN ('complete','conflict','creating') AND available_at>0 AND available_at<=1 AND (may_have_remote=1 OR create_attempts<3) ORDER BY available_at,created_at,id LIMIT 1",
+            "notion_queue_due",
         ),
         (
             "SELECT id FROM notion_queue WHERE destination_key IS NULL ORDER BY created_at,id LIMIT 64",
@@ -1412,6 +1562,15 @@ fn queue_tick_query_plans_exclude_historical_work_and_temporary_sorts() {
 // DA06 / #73, #98: run the real schema history, never a relabeled current DB.
 #[test]
 fn schema_nineteen_fair_admission_upgrade_preserves_every_table_row() {
+    historical_fair_admission_upgrade_preserves_every_table_row(19);
+}
+
+#[test]
+fn schema_twenty_fair_cursor_upgrade_preserves_every_table_row() {
+    historical_fair_admission_upgrade_preserves_every_table_row(20);
+}
+
+fn historical_fair_admission_upgrade_preserves_every_table_row(version: u32) {
     use std::collections::BTreeMap;
     fn rows(db: &rusqlite::Connection) -> BTreeMap<String, Vec<Vec<rusqlite::types::Value>>> {
         let tables = db
@@ -1480,21 +1639,28 @@ fn schema_nineteen_fair_admission_upgrade_preserves_every_table_row() {
         INSERT INTO notion_attempts(queue_id,number,action,started_at,finished_at,outcome,page_id,progress)
             SELECT id,1,'create',100,101,'reconcile',page_id,progress FROM notion_queue;
     "#).unwrap();
+    if version == 20 {
+        db.execute_batch(include_str!("../migrations/020_notion_fair_admission.sql"))
+            .unwrap();
+        db.pragma_update(None, "user_version", version).unwrap();
+    }
     let before = rows(&db);
+    assert_eq!(before.len(), 78);
     assert_eq!(before["notion_queue"].len(), 1);
     assert_eq!(before["notion_attempts"].len(), 1);
     drop(db);
     let store = Store::open(root.path()).unwrap();
     let db = rusqlite::Connection::open(store.root().join("archive.sqlite")).unwrap();
+    let mut after = rows(&db);
+    assert_eq!(after.remove("notion_admission_cursor"), Some(vec![]));
     assert_eq!(
-        rows(&db),
-        before,
-        "index-only upgrade must not change any row"
+        after, before,
+        "upgrade must not change any historical table row"
     );
     assert_eq!(
         db.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
             .unwrap(),
-        20
+        21
     );
     assert_eq!(
         db.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))
@@ -1509,5 +1675,14 @@ fn schema_nineteen_fair_admission_upgrade_preserves_every_table_row() {
         .unwrap(),
         0
     );
-    assert_eq!(db.query_row("SELECT count(*) FROM sqlite_master WHERE type='index' AND name IN ('notion_queue_due','notion_queue_due_created')", [], |r| r.get::<_, u64>(0)).unwrap(), 2);
+    assert_eq!(
+        db.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='notion_queue_due'",
+            [],
+            |r| r.get::<_, u64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(db.query_row("SELECT count(*) FROM sqlite_master WHERE type='index' AND name='notion_queue_due_created'", [], |r| r.get::<_, u64>(0)).unwrap(), 0);
 }
