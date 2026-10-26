@@ -328,7 +328,7 @@ async fn retrying_the_same_invalid_notion_record_keeps_accounting_idempotent() {
     let id: String = conn
         .query_row("SELECT id FROM notion_queue", [], |r| r.get(0))
         .unwrap();
-    store.retry_notion(&id).unwrap();
+    fixture_control(|| store.retry_notion(&id)).await;
     tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     telegram_archive_bot::notion_worker::tick(
         &store,
@@ -491,6 +491,184 @@ async fn lost_creation_response_reconciles_marker_without_recreating_after_empty
         "restart must find and verify the actually created pages"
     );
     assert_eq!(page_count(), 2);
+}
+
+#[cfg(feature = "ntn")]
+async fn due_reconciliation_with_fresh_backlog(known_page: bool) {
+    let (root, store, mut config) = worker_fixture();
+    config.notion.retry_seconds = 3600;
+    store
+        .capture(&capture("100", "older immutable body"))
+        .unwrap();
+    if !known_page {
+        std::fs::write(root.path().join("mode"), "accepted_lost").unwrap();
+    }
+    let cancel = tokio_util::sync::CancellationToken::new();
+    assert!(
+        telegram_archive_bot::notion_worker::tick(&store, &config, &cancel)
+            .await
+            .unwrap(),
+        "fixture must dispatch the initial publication"
+    );
+    let db = rusqlite::Connection::open(config.state_dir.join("archive.sqlite")).unwrap();
+    let older: String = db
+        .query_row("SELECT id FROM notion_queue WHERE attempts=1", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    if known_page {
+        fixture_control(|| store.reconcile_notion(&older, None)).await;
+    }
+    let now: i64 = db
+        .query_row("SELECT unixepoch()", [], |r| r.get(0))
+        .unwrap();
+    let future: String = db
+        .query_row("SELECT id FROM notion_queue WHERE id!=?1", [&older], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    db.execute(
+        "UPDATE notion_queue SET available_at=?1 WHERE id!=?2",
+        rusqlite::params![now + 3600, older],
+    )
+    .unwrap();
+    db.execute(
+        "UPDATE notion_queue SET available_at=?1 WHERE id=?2",
+        rusqlite::params![now - 1, older],
+    )
+    .unwrap();
+    // Real new captures enqueue 32 fresh available_at=0 rows; do not rewrite
+    // immutable created_at or use the test helper that makes every retry due.
+    for id in 200..216 {
+        store
+            .capture(&capture(&id.to_string(), &format!("later body {id}")))
+            .unwrap();
+    }
+    let fresh: i64 = db
+        .query_row(
+            "SELECT count(*) FROM notion_queue WHERE available_at=0",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(fresh, 32);
+    let newer_first: i64 = db
+        .query_row("SELECT count(*) FROM notion_queue n JOIN notion_queue o ON o.id=?1 WHERE n.available_at=0 AND (n.created_at<o.created_at OR (n.created_at=o.created_at AND n.id<o.id))", [&older], |r| r.get(0))
+        .unwrap();
+    assert_eq!(
+        newer_first, 0,
+        "fixture must make the retry older than fresh work"
+    );
+    std::fs::write(root.path().join("mode"), "empty_search").unwrap();
+    let calls_before = std::fs::read_to_string(root.path().join("calls"))
+        .unwrap()
+        .lines()
+        .count();
+    drain_until(&store, &config, |_| {
+        let fresh_attempts: i64 = db
+            .query_row(
+                "SELECT count(*) FROM notion_queue WHERE available_at=0 AND attempts>0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            fresh_attempts, 0,
+            "fresh work must not advance ahead of the older due reconciliation"
+        );
+        db.query_row(
+            "SELECT attempts FROM notion_queue WHERE id=?1",
+            [&older],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap()
+            == 2
+    })
+    .await;
+    let (attempts, creates, state, next): (i64, i64, String, i64) = db
+        .query_row(
+            "SELECT attempts,create_attempts,state,available_at FROM notion_queue WHERE id=?1",
+            [&older],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        attempts, 2,
+        "an older due reconciliation must run before available_at=0 fresh backlog"
+    );
+    assert_eq!(
+        creates, 1,
+        "ambiguous publication must not create another page"
+    );
+    assert_eq!(state, if known_page { "complete" } else { "reconcile" });
+    if !known_page {
+        assert!(next > now, "an empty search must retain retry backoff");
+    }
+    let calls = std::fs::read_to_string(root.path().join("calls")).unwrap();
+    let calls: Vec<Vec<String>> = calls
+        .lines()
+        .skip(calls_before)
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(
+        !calls
+            .iter()
+            .any(|args| args.get(1).is_some_and(|path| path == "v1/pages")
+                || args.iter().any(|arg| arg == "PATCH")),
+        "reconciliation is read-only"
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .any(|args| args.get(1).is_some_and(|path| path == "v1/search")),
+        !known_page
+    );
+    // A deferred/finished old intent must let fresh work advance on the next
+    // actual worker turn; the older future-backoff intent remains untouched.
+    drain_until(&store, &config, |_| {
+        db.query_row(
+            "SELECT count(*) FROM notion_queue WHERE state='complete' AND id!=?1",
+            [&older],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap()
+            == 1
+    })
+    .await;
+    let fresh_complete: i64 = db
+        .query_row(
+            "SELECT count(*) FROM notion_queue WHERE state='complete' AND id!=?1",
+            [&older],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(fresh_complete, 1);
+    let future_attempts: i64 = db
+        .query_row(
+            "SELECT attempts FROM notion_queue WHERE id=?1",
+            [&future],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        future_attempts, 0,
+        "future backoff is an eligibility bound, regardless of age"
+    );
+    let remote: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.path().join("remote.json")).unwrap()).unwrap();
+    assert_eq!(remote["pages"].as_object().unwrap().len(), 2);
+}
+
+#[cfg(feature = "ntn")]
+#[tokio::test]
+async fn due_reconciliation_unknown_page_is_not_starved_by_fresh_backlog() {
+    due_reconciliation_with_fresh_backlog(false).await;
+}
+
+#[cfg(feature = "ntn")]
+#[tokio::test]
+async fn due_reconciliation_known_page_is_not_starved_by_fresh_backlog() {
+    due_reconciliation_with_fresh_backlog(true).await;
 }
 
 #[cfg(feature = "ntn")]
@@ -709,6 +887,26 @@ async fn oversized_record_is_a_visible_terminal_conflict_not_queue_starvation() 
     assert_eq!(metrics["states"]["complete"], 3);
 }
 
+// Local controls explicitly reject a busy worker; admission is not an error in
+// the behavior under test. Do not retry any other operator failure.
+#[cfg(feature = "ntn")]
+async fn fixture_control(operation: impl Fn() -> anyhow::Result<()>) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        match operation() {
+            Ok(()) => return,
+            Err(error)
+                if error.to_string()
+                    == "Notion worker is busy; try again after the current operation"
+                    && std::time::Instant::now() < deadline =>
+            {
+                tokio::task::yield_now().await
+            }
+            Err(error) => panic!("fixture control admission failed: {error}"),
+        }
+    }
+}
+
 #[cfg(feature = "ntn")]
 async fn drain_until(
     store: &Store,
@@ -740,7 +938,10 @@ async fn drain_until(
 #[tokio::test]
 async fn operator_candidate_is_untrusted_until_body_verification_and_human_edits_are_conflicts() {
     use std::process::Command;
-    let (root, store, config) = worker_fixture();
+    let (root, store, mut config) = worker_fixture();
+    // Stage both ambiguous creates before recovery. A short retry can become
+    // due during the fixture and correctly precede the second fresh create.
+    config.notion.retry_seconds = 3600;
     let config_path = root.path().join("config.toml");
     std::fs::write(&config_path, toml::to_string(&config).unwrap()).unwrap();
     let cli = |args: &[&str]| {
@@ -812,6 +1013,7 @@ async fn operator_candidate_is_untrusted_until_body_verification_and_human_edits
             .status
             .success()
     );
+    due(&config);
     drain_until(&store, &config, |m| m["states"]["complete"] == 2).await;
     assert_eq!(
         conn.query_row("SELECT page_id FROM notion_queue WHERE id=?1", [&id], |r| r
@@ -1019,6 +1221,10 @@ fn queue_tick_query_plans_exclude_historical_work_and_temporary_sorts() {
             "notion_queue_due",
         ),
         (
+            "SELECT id FROM notion_queue INDEXED BY notion_queue_due_created WHERE destination_key='fixture' AND state NOT IN ('complete','conflict','creating') AND available_at<=1 AND (may_have_remote=1 OR create_attempts<3) ORDER BY created_at,id LIMIT 1",
+            "notion_queue_due_created",
+        ),
+        (
             "SELECT id FROM notion_queue WHERE destination_key IS NULL ORDER BY created_at,id LIMIT 64",
             "notion_queue_unbound",
         ),
@@ -1036,4 +1242,107 @@ fn queue_tick_query_plans_exclude_historical_work_and_temporary_sorts() {
             "{sql}: {plan}"
         );
     }
+}
+
+// DA06 / #73, #98: run the real schema history, never a relabeled current DB.
+#[test]
+fn schema_nineteen_fair_admission_upgrade_preserves_every_table_row() {
+    use std::collections::BTreeMap;
+    fn rows(db: &rusqlite::Connection) -> BTreeMap<String, Vec<Vec<rusqlite::types::Value>>> {
+        let tables = db
+            .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        tables
+            .into_iter()
+            .map(|table| {
+                let mut stmt = db
+                    .prepare(&format!("SELECT * FROM \"{}\"", table.replace('"', "\"\"")))
+                    .unwrap();
+                let mut values = stmt
+                    .query_map([], |r| {
+                        (0..r.as_ref().column_count())
+                            .map(|i| r.get::<_, rusqlite::types::Value>(i))
+                            .collect::<rusqlite::Result<Vec<_>>>()
+                    })
+                    .unwrap()
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .unwrap();
+                values.sort_by_cached_key(|r| format!("{r:?}"));
+                (table, values)
+            })
+            .collect()
+    }
+    let root = root();
+    let db = rusqlite::Connection::open(root.path().join("archive.sqlite")).unwrap();
+    for sql in [
+        include_str!("../migrations/001_canonical.sql"),
+        include_str!("../migrations/002_revision_quality.sql"),
+        include_str!("../migrations/003_ingress.sql"),
+        include_str!("../migrations/004_job_recovery.sql"),
+        include_str!("../migrations/005_derivatives.sql"),
+        include_str!("../migrations/006_immutable_artifacts.sql"),
+        include_str!("../migrations/007_delivery_attempts.sql"),
+        include_str!("../migrations/008_projection.sql"),
+        include_str!("../migrations/009_recovery.sql"),
+        include_str!("../migrations/010_transforms.sql"),
+        include_str!("../migrations/011_message_origins.sql"),
+        include_str!("../migrations/012_observation_source.sql"),
+        include_str!("../migrations/013_account_activities.sql"),
+        include_str!("../migrations/014_daily_planner.sql"),
+        include_str!("../migrations/015_notion_publication.sql"),
+        include_str!("../migrations/016_daily_capture.sql"),
+        include_str!("../migrations/017_notion_pdf.sql"),
+        include_str!("../migrations/018_failure_reporting.sql"),
+        include_str!("../migrations/019_reader_handoffs.sql"),
+    ] {
+        db.execute_batch(sql).unwrap();
+    }
+    db.execute_batch(r#"
+        PRAGMA foreign_keys=ON;
+        PRAGMA user_version=19;
+        INSERT INTO sources(id,provider,external_id) VALUES('historical-source','x','100');
+        INSERT INTO observations(source_id,observed_at,status,extractor,evidence)
+            VALUES('historical-source',100,'unavailable','historical-fixture','{"retained":true}');
+        UPDATE notion_queue SET destination_key='fixture',destination='{}',
+            state='reconcile',may_have_remote=1,attempts=1,create_attempts=1,
+            available_at=130,record='{"historical":true}',publication_key='pinned-key',
+            expected_digest='pinned-digest',page_id='retained-page',
+            progress='{"written_blocks":7,"verified_blocks":0}',error='transport';
+        INSERT INTO notion_attempts(queue_id,number,action,started_at,finished_at,outcome,page_id,progress)
+            SELECT id,1,'create',100,101,'reconcile',page_id,progress FROM notion_queue;
+    "#).unwrap();
+    let before = rows(&db);
+    assert_eq!(before["notion_queue"].len(), 1);
+    assert_eq!(before["notion_attempts"].len(), 1);
+    drop(db);
+    let store = Store::open(root.path()).unwrap();
+    let db = rusqlite::Connection::open(store.root().join("archive.sqlite")).unwrap();
+    assert_eq!(
+        rows(&db),
+        before,
+        "index-only upgrade must not change any row"
+    );
+    assert_eq!(
+        db.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
+            .unwrap(),
+        20
+    );
+    assert_eq!(
+        db.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))
+            .unwrap(),
+        "ok"
+    );
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r
+            .get::<_, u64>(
+            0
+        ))
+        .unwrap(),
+        0
+    );
+    assert_eq!(db.query_row("SELECT count(*) FROM sqlite_master WHERE type='index' AND name IN ('notion_queue_due','notion_queue_due_created')", [], |r| r.get::<_, u64>(0)).unwrap(), 2);
 }

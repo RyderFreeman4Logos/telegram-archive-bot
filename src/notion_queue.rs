@@ -143,7 +143,9 @@ impl Store {
     }
 
     pub(crate) fn notion_next(&self, destination: &str, config: &Notion) -> Result<Option<Intent>> {
-        Ok(self.connection()?.query_row("SELECT id,kind,entity_id,observation_id,created_at,record,may_have_remote,attempts,page_id,candidate_page_id FROM notion_queue WHERE destination_key=?1 AND state NOT IN ('complete','conflict','creating') AND available_at<=?2 AND (may_have_remote=1 OR create_attempts<?3) ORDER BY available_at,created_at,id LIMIT 1",params![destination,now(),config.max_attempts], |r|Ok(Intent{id:r.get(0)?,kind:r.get(1)?,entity:r.get(2)?,observation:r.get(3)?,created_at:r.get(4)?,record:r.get(5)?,may_have_remote:r.get(6)?,attempts:r.get(7)?,page_id:r.get(8)?,candidate_page_id:r.get(9)?})).optional()?)
+        // #98: available_at gates eligibility, not priority. Fresh zero-valued
+        // rows must not indefinitely outrank an older due reconciliation.
+        Ok(self.connection()?.query_row("SELECT id,kind,entity_id,observation_id,created_at,record,may_have_remote,attempts,page_id,candidate_page_id FROM notion_queue INDEXED BY notion_queue_due_created WHERE destination_key=?1 AND state NOT IN ('complete','conflict','creating') AND available_at<=?2 AND (may_have_remote=1 OR create_attempts<?3) ORDER BY created_at,id LIMIT 1",params![destination,now(),config.max_attempts], |r|Ok(Intent{id:r.get(0)?,kind:r.get(1)?,entity:r.get(2)?,observation:r.get(3)?,created_at:r.get(4)?,record:r.get(5)?,may_have_remote:r.get(6)?,attempts:r.get(7)?,page_id:r.get(8)?,candidate_page_id:r.get(9)?})).optional()?)
     }
 
     pub(crate) fn notion_begin(
