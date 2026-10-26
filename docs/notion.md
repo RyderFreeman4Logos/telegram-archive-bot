@@ -11,6 +11,14 @@ time, every original URL, retrieval/extraction provenance, completeness and full
 captured UTF-8 text. Original byte SHA256 is separate from captured-text SHA256
 and the canonical Notion projection digest. A missing raw digest stays absent.
 
+**[#99](https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/99)**:
+source revisions whose optional title is absent or empty use
+`Source revision <revision ID>` as the publication envelope title. Every nonempty
+title, including whitespace, remains unchanged. Canonical source metadata and
+body bytes are preserved; the source-observation record retains the original
+title value. Existing no-dispatch conflicts require an explicit `notion-retry`
+after the fix is installed; this does not re-arm uncertain remote writes.
+
 | Record kind | Versioned metadata |
 | --- | --- |
 | Account | Complete DA01 account observation, including ProviderId or Unresolved identity, optional handle/display name and evidence |

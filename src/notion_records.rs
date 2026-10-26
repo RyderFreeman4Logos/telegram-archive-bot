@@ -109,6 +109,7 @@ impl Store {
                     let metadata: ContentMetadata = serde_json::from_str(&metadata)?;
                     record.title = metadata
                         .title
+                        .filter(|title| !title.is_empty())
                         .unwrap_or_else(|| format!("Source revision {}", intent.entity));
                     record.content = body;
                     record.data = RecordData::Revision {

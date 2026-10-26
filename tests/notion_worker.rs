@@ -342,6 +342,171 @@ async fn retrying_the_same_invalid_notion_record_keeps_accounting_idempotent() {
 
 #[cfg(feature = "ntn")]
 #[tokio::test]
+async fn s99_revision_title_fallback_preserves_canonical_metadata() {
+    for title in [None, Some(""), Some(" \n\t"), Some("  原始标题 🌍  ")] {
+        let (root, store, config) = worker_fixture();
+        let mut captured = capture("990", "Original Unicode body 🌍\nwith a second line.");
+        captured.identity = Identity::from_url("https://example.org/untitled").unwrap();
+        captured.submitted_url = Some("https://example.org/untitled".into());
+        captured.content.as_mut().unwrap().metadata.title = title.map(str::to_owned);
+        let revision = store.capture(&captured).unwrap().unwrap();
+        let db = rusqlite::Connection::open(config.state_dir.join("archive.sqlite")).unwrap();
+        let canonical = || {
+            db.query_row(
+                "SELECT content_digest,body,metadata FROM source_revisions WHERE id=?1",
+                [&revision],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .unwrap()
+        };
+        let before = canonical();
+        drop(store);
+        let store = Store::open(&config.state_dir).unwrap();
+        // Stop on the actual terminal error as well as success; RED is not a polling timeout.
+        drain_until(&store, &config, |m| {
+            m["states"]["complete"] == 2 || m["states"]["conflict"] == 1
+        })
+        .await;
+        let (state, encoded, receipt): (String, Option<String>, Option<String>) = db
+            .query_row(
+                "SELECT state,record,receipt FROM notion_queue WHERE kind='revision'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(state, "complete", "canonical optional title {title:?}");
+        let record: telegram_archive_bot::notion::Record =
+            serde_json::from_str(&encoded.unwrap()).unwrap();
+        let expected_title = match title {
+            None | Some("") => format!("Source revision {revision}"),
+            Some(title) => title.to_owned(),
+        };
+        assert_eq!(record.title, expected_title);
+        assert_eq!(record.content, before.1);
+        assert_eq!(record.id, revision);
+        let receipt: serde_json::Value = serde_json::from_str(&receipt.unwrap()).unwrap();
+        assert_eq!(
+            receipt["canonical_digest"],
+            record.plan(&config.notion).unwrap().canonical_digest
+        );
+        let observation: String = db
+            .query_row(
+                "SELECT record FROM notion_queue WHERE kind='observation'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let observation: telegram_archive_bot::notion::Record =
+            serde_json::from_str(&observation).unwrap();
+        let content: serde_json::Value = serde_json::from_str(&observation.content).unwrap();
+        assert_eq!(content["revision_metadata"]["title"], json!(title));
+        assert_eq!(
+            canonical(),
+            before,
+            "publication must not rewrite canonical source data"
+        );
+        assert_eq!(store.failure_report_status(10).unwrap()["events"], 0);
+        let remote: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("remote.json")).unwrap())
+                .unwrap();
+        assert_eq!(remote["pages"].as_object().unwrap().len(), 2);
+    }
+}
+
+#[cfg(feature = "ntn")]
+#[tokio::test]
+async fn s99_empty_title_no_effect_conflict_can_resume_after_reopen() {
+    let (root, store, mut config) = worker_fixture();
+    let mut captured = capture(
+        "991",
+        "Canonical body retained across a local publication refusal.",
+    );
+    captured.content.as_mut().unwrap().metadata.title = Some(String::new());
+    let revision = store.capture(&captured).unwrap().unwrap();
+    let id = format!("revision:{revision}");
+    // Complete this namespace before removing its sibling; bootstrap must not recreate it.
+    assert_eq!(store.notion_bootstrap(64).unwrap(), 1);
+    let db = rusqlite::Connection::open(config.state_dir.join("archive.sqlite")).unwrap();
+    db.execute("DELETE FROM notion_queue WHERE kind='observation'", [])
+        .unwrap();
+    let record_bytes = config.notion.record_bytes;
+    config.notion.record_bytes = 1; // Exercise the real known-no-effect terminal settlement.
+    drain_until(&store, &config, |m| m["states"]["conflict"] == 1).await;
+    let unattempted: bool = db.query_row(
+        "SELECT state='conflict' AND attempts=0 AND create_attempts=0 AND may_have_remote=0 AND record IS NULL AND page_id IS NULL FROM notion_queue WHERE id=?1",
+        [&id], |r| r.get(0),
+    ).unwrap();
+    assert!(unattempted);
+    assert!(!root.path().join("calls").exists());
+    drop(store);
+    let store = Store::open(&config.state_dir).unwrap();
+    config.notion.record_bytes = record_bytes;
+    let retry_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match store.retry_notion(&id) {
+            Ok(()) => break,
+            Err(error)
+                if error.to_string()
+                    == "Notion worker is busy; try again after the current operation"
+                    && std::time::Instant::now() < retry_deadline =>
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            Err(error) => panic!("operator retry failed: {error}"),
+        }
+    }
+    drain_until(&store, &config, |m| {
+        m["states"]["complete"] == 1 || m["states"]["conflict"] == 1
+    })
+    .await;
+    let state: String = db
+        .query_row("SELECT state FROM notion_queue WHERE id=?1", [&id], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(
+        state, "complete",
+        "empty source title must not defeat a safe operator retry"
+    );
+    assert_eq!(
+        store.revision(&revision).unwrap().content,
+        captured.content.unwrap()
+    );
+    let attempts: i64 = db
+        .query_row(
+            "SELECT count(*) FROM notion_attempts WHERE queue_id=?1",
+            [&id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(attempts, 1);
+    let recovered: i64 = db
+        .query_row(
+            "SELECT count(*) FROM failure_events WHERE outcome='recovered'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(recovered, 1);
+    assert_eq!(
+        db.query_row("SELECT consecutive FROM failure_incidents", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    let remote: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.path().join("remote.json")).unwrap()).unwrap();
+    assert_eq!(remote["pages"].as_object().unwrap().len(), 1);
+}
+
+#[cfg(feature = "ntn")]
+#[tokio::test]
 async fn worker_publishes_actual_source_changes_and_verifies_receipts() {
     let (root, store, config) = worker_fixture();
     let mut captured = capture("100", "完整原文 🌍\n");
