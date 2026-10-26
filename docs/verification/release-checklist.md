@@ -1,10 +1,21 @@
 # Release candidate verification
 
-Current target: **0.1.0-rc.4**. This source snapshot adds the daily anonymous X,
-Notion/PDF, failure-reporting and external-reader workflow. Its final versioned
-canonical gate, hosted CI, Cargo installation, schema-19 activation and published
-asset verification remain pending at source preparation. The release verification
-assets must bind their actual source commit/tree and executable hashes.
+Current target: **0.1.0-rc.5**. This candidate contains the due-recovery fairness
+fix (#98) and empty revision-title fallback (#99), with an index-only schema-20
+upgrade. The final combined source review, eight-command canonical gate, hosted
+CI, Cargo installation, verified-backup activation and public download checks
+remain pending at this source freeze. See [RC5 notes](../release-notes-0.1.0-rc.5.md)
+and the [versioned release verification assets](https://github.com/RyderFreeman4Logos/telegram-archive-bot/releases/tag/v0.1.0-rc.5)
+for the later source-bound outcomes. Historical RC4 receipts do not transfer to
+RC5; client/provider tracks #41/#92/#94/#97 remain separate.
+
+## Historical RC4 preparation
+
+The RC4 source snapshot added the daily anonymous X, Notion/PDF, failure-reporting
+and external-reader workflow. Its final versioned canonical gate, hosted CI,
+Cargo installation, schema-19 activation and published asset verification were
+pending at that preparation snapshot. The release verification assets bind their
+actual source commit/tree and executable hashes.
 
 Independent leaf gates and real anonymous timeline/content, Notion text/PDF and
 synthetic GitHub reporting checks passed with separate source-bound receipts.
