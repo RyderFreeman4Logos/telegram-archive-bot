@@ -61,7 +61,7 @@ fn historical_schema_upgrades(version: u32) -> Result<()> {
     let conn = rusqlite::Connection::open(state.join("archive.sqlite"))?;
     assert_eq!(
         conn.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))?,
-        19
+        telegram_archive_bot::storage::SCHEMA_VERSION
     );
     assert_eq!(
         conn.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))?,

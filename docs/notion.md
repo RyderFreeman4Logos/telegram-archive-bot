@@ -11,6 +11,14 @@ time, every original URL, retrieval/extraction provenance, completeness and full
 captured UTF-8 text. Original byte SHA256 is separate from captured-text SHA256
 and the canonical Notion projection digest. A missing raw digest stays absent.
 
+**[#99](https://github.com/RyderFreeman4Logos/telegram-archive-bot/issues/99)**:
+source revisions whose optional title is absent or empty use
+`Source revision <revision ID>` as the publication envelope title. Every nonempty
+title, including whitespace, remains unchanged. Canonical source metadata and
+body bytes are preserved; the source-observation record retains the original
+title value. Existing no-dispatch conflicts require an explicit `notion-retry`
+after the fix is installed; this does not re-arm uncertain remote writes.
+
 | Record kind | Versioned metadata |
 | --- | --- |
 | Account | Complete DA01 account observation, including ProviderId or Unresolved identity, optional handle/display name and evidence |
@@ -157,6 +165,16 @@ content or overwrites a human edit. This is not an exactly-once delivery claim.
 Known no-effect failures use bounded create attempts and retry delay. Unsupported
 or missing prerequisites do not exhaust the create budget. Auth/rate errors and
 provider retry hints remain separate from ambiguous writes.
+
+Due work is selected by immutable creation time and ID within its destination
+(DA06 / #73, #98). `available_at` remains an eligibility bound: a future retry
+cannot run early, while a due reconciliation is not starved by newer rows with
+the initial `available_at=0`. A completed or deferred old intent lets other due
+work advance; repeated failures retain their retry delay. Schema 20 adds an
+active-queue creation-order index without changing canonical records, publication
+pins, attempts or conflicts. It retains the earlier due-time index and avoids a
+temporary sort of the active backlog. This does not guarantee a fixed completion
+time when remote requests fail or many older intents are due.
 
 `status` exposes `notion_publication` counts, oldest pending age, unbound count and
 remaining bootstrap namespaces. `doctor.notion` reports local prerequisites
